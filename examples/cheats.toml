@@ -1,0 +1,18 @@
+# Ejemplo de ~/.config/pistasho/cheats.toml
+# También puedes agregar entradas con:
+#   pistasho add 'cmd {{marcador}}' -d 'descripción' -t etiqueta1,etiqueta2
+
+[[cheat]]
+cmd = "tar --exclude=node_modules -czf {{archivo}}.tar.gz {{dir}}"
+desc = "Comprimir proyecto sin node_modules"
+tags = ["respaldo"]
+
+[[cheat]]
+cmd = "fuser -k {{puerto}}/tcp"
+desc = "Matar el proceso que ocupa un puerto"
+tags = ["red"]
+
+[[cheat]]
+cmd = "journalctl -u {{servicio}} -n 100 --no-pager"
+desc = "Últimas 100 líneas del log de un servicio"
+tags = ["logs", "systemd"]
