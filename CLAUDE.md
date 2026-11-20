@@ -48,6 +48,7 @@ Detalles ya resueltos que conviene no romper:
 - El historial ignora ruido (`ls`, `cd`, `clear`…) y se queda con los `history_limit` más recientes.
 - La base es derivada: `update` rehace las filas de tldr; un `SCHEMA_VERSION` distinto la reinicia. Las columnas SQL son `description` y `uses` (no `desc` / `count`, palabras reservadas).
 - Historial de zsh: `HISTFILE` es una variable de zsh que casi nunca está exportada, así que el widget la pasa (`HISTFILE="$HISTFILE" command pistasho …`) y `Config::history_path` prueba `~/.zsh_history`, `~/.histfile`… si no hay variable.
+- Popup de tmux: `display-popup` NO expande formatos (`#{pane_id}`) dentro de su comando; el proceso recibe el texto literal. Por eso `init tmux` genera un `run-shell -b` (que sí expande `#{pane_id}` y `#{client_name}`) que lanza `tmux display-popup` con valores ya resueltos. El `TMUX_PANE` del popup es el del propio popup, no el panel de destino. Probar siempre con un cliente tmux real (pty), no solo con `send-keys`.
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia

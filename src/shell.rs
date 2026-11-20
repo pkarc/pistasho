@@ -36,12 +36,21 @@ fn popup_exe(exe: Option<&std::path::Path>) -> String {
     }
 }
 
+/// tmux does not expand formats such as `#{pane_id}` inside the command of `display-popup`
+/// (the process would receive the literal text), but `run-shell` does. So the binding goes
+/// through `run-shell`, which resolves the pane and the client and then starts the popup with
+/// plain values. The popup's own `TMUX_PANE` is the popup, not the pane we must write to.
 pub fn tmux(cfg: &Config) -> String {
-    let key = &cfg.keys.tmux;
-    let exe = popup_exe(std::env::current_exe().ok().as_deref());
+    tmux_binding(
+        &cfg.keys.tmux,
+        &popup_exe(std::env::current_exe().ok().as_deref()),
+    )
+}
+
+fn tmux_binding(key: &str, exe: &str) -> String {
     format!(
         "# pistasho · tmux popup (add it to ~/.tmux.conf)\n\
-         bind-key {key} display-popup -E -w 80% -h 60% \"{exe} search --send-to '#{{pane_id}}'\"\n"
+         bind-key {key} run-shell -b \"tmux display-popup -c #{{client_name}} -t #{{pane_id}} -E -w 80% -h 60% \\\"{exe} search --send-to #{{pane_id}}\\\"\"\n"
     )
 }
 
@@ -49,6 +58,26 @@ pub fn tmux(cfg: &Config) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Regression: a real popup received the literal `#{pane_id}` and `tmux send-keys`
+    /// failed, so nothing reached the prompt. Every format must sit in the `run-shell` part,
+    /// where tmux expands it, never inside the popup's own command as a quoted literal.
+    #[test]
+    fn tmux_binding_expands_formats_in_run_shell() {
+        let line = tmux_binding("g", "'/home/u/.cargo/bin/pistasho'")
+            .lines()
+            .find(|l| l.starts_with("bind-key"))
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            line,
+            "bind-key g run-shell -b \"tmux display-popup -c #{client_name} -t #{pane_id} -E -w 80% -h 60% \\\"'/home/u/.cargo/bin/pistasho' search --send-to #{pane_id}\\\"\""
+        );
+        assert!(
+            !line.contains("'#{pane_id}'"),
+            "a quoted format is not expanded by display-popup"
+        );
+    }
 
     #[test]
     fn popup_uses_absolute_path() {
