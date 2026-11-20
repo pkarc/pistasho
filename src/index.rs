@@ -1,12 +1,14 @@
-//! Command index: tldr (precomputed by `pistasho update`), your cheatsheet and your history.
+//! Command index: tldr (stored by `pistasho update`), your cheatsheet and your history, all kept
+//! in the SQLite database (`db.rs`). Cheats and history are re-synced when their files change.
 
 use crate::config::{self, Config};
+use crate::db::Db;
 use crate::i18n::{lang, tr, Lang};
 use crate::{history, placeholders, tldr};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{BufReader, BufWriter, Read};
+use std::io::Read;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -18,6 +20,24 @@ pub enum Source {
 
 impl Source {
     /// Label shown next to each result (translated).
+    /// Name stored in the database.
+    pub fn db_name(self) -> &'static str {
+        match self {
+            Source::Tldr => "tldr",
+            Source::Cheat => "cheat",
+            Source::Hist => "hist",
+        }
+    }
+
+    pub fn from_db_name(s: &str) -> Option<Self> {
+        match s {
+            "tldr" => Some(Source::Tldr),
+            "cheat" => Some(Source::Cheat),
+            "hist" => Some(Source::Hist),
+            _ => None,
+        }
+    }
+
     pub fn tag(self) -> &'static str {
         match self {
             Source::Tldr => "tldr",
@@ -44,18 +64,9 @@ pub struct Entry {
     pub count: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct IndexFile {
-    version: u32,
-    languages: Vec<String>,
-    entries: Vec<Entry>,
-}
-
-const INDEX_VERSION: u32 = 1;
-
 // ---------------------------------------------------------------- tldr
 
-/// Downloads the tldr zip and builds the index.
+/// Downloads the tldr zip and stores its entries in the database.
 pub fn update(cfg: &Config) -> Result<(usize, usize)> {
     eprintln!("{} {} …", tr("Downloading", "Descargando"), cfg.tldr_url);
     let resp = ureq::get(&cfg.tldr_url)
@@ -73,17 +84,23 @@ pub fn update(cfg: &Config) -> Result<(usize, usize)> {
 
     let (entries, pages) = build_from_zip(&bytes, &cfg.languages, &cfg.platforms)?;
     let n = entries.len();
-    let path = config::index_path()?;
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    let file = std::fs::File::create(&path)?;
-    serde_json::to_writer(
-        BufWriter::new(file),
-        &IndexFile {
-            version: INDEX_VERSION,
-            languages: cfg.languages.clone(),
-            entries,
-        },
+    let mut db = Db::open(&config::db_path()?)?;
+    let updated = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+        .to_string();
+    db.replace_source(
+        Source::Tldr,
+        &entries,
+        &[
+            ("languages", &cfg.languages.join(",")),
+            ("tldr_updated", &updated),
+        ],
     )?;
+    // the JSON index of earlier versions is no longer used
+    if let Ok(dir) = config::data_dir() {
+        let _ = std::fs::remove_file(dir.join("index.json"));
+    }
     Ok((pages, n))
 }
 
@@ -168,26 +185,6 @@ fn merge_page(
         .collect()
 }
 
-fn load_tldr() -> Result<Option<Vec<Entry>>> {
-    let path = config::index_path()?;
-    let file = match std::fs::File::open(&path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    let idx: IndexFile = serde_json::from_reader(BufReader::new(file)).with_context(|| match lang() {
-        Lang::En => format!("corrupt index: {} (run `pistasho update`)", path.display()),
-        Lang::Es => format!("índice dañado: {} (ejecuta `pistasho update`)", path.display()),
-    })?;
-    if idx.version != INDEX_VERSION {
-        anyhow::bail!(tr(
-            "the index is from another version; run `pistasho update`",
-            "el índice es de otra versión; ejecuta `pistasho update`"
-        ));
-    }
-    Ok(Some(idx.entries))
-}
-
 // ---------------------------------------------------------------- cheatsheet
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -265,21 +262,31 @@ pub fn load_history(cfg: &Config) -> Vec<Entry> {
     };
     history::load(&bytes, cfg.history_limit)
         .into_iter()
-        .map(|h| Entry {
-            tool: first_word(&h.cmd),
-            desc: match (lang(), h.count) {
-                (Lang::En, 1) => "used 1 time".into(),
-                (Lang::En, n) => format!("used {n} times"),
-                (Lang::Es, 1) => "usado 1 vez".into(),
-                (Lang::Es, n) => format!("usado {n} veces"),
-            },
-            alt: String::new(),
-            cmd: h.cmd,
-            source: Source::Hist,
-            origin: tr("history", "historial").into(),
-            count: h.count,
+        .map(|h| {
+            let (desc, origin) = history_labels(h.count);
+            Entry {
+                tool: first_word(&h.cmd),
+                desc,
+                alt: String::new(),
+                cmd: h.cmd,
+                source: Source::Hist,
+                origin,
+                count: h.count,
+            }
         })
         .collect()
+}
+
+/// Description and origin of a history entry. They depend on the UI language, so they are
+/// recomputed on every load instead of trusting what the database stored.
+fn history_labels(count: u32) -> (String, String) {
+    let desc = match (lang(), count) {
+        (Lang::En, 1) => "used 1 time".into(),
+        (Lang::En, n) => format!("used {n} times"),
+        (Lang::Es, 1) => "usado 1 vez".into(),
+        (Lang::Es, n) => format!("usado {n} veces"),
+    };
+    (desc, tr("history", "historial").into())
 }
 
 // ---------------------------------------------------------------- everything together
@@ -291,11 +298,51 @@ pub struct Index {
 
 impl Index {
     pub fn load(cfg: &Config) -> Result<Self> {
-        let mut entries = load_cheats()?;
-        entries.extend(load_history(cfg));
-        let tldr = load_tldr()?;
-        let has_tldr = tldr.is_some();
-        entries.extend(tldr.unwrap_or_default());
+        let mut db = Db::open(&config::db_path()?)?;
+        sync(&mut db, cfg)?;
+        let mut entries = db.load_all()?;
+        for e in entries.iter_mut().filter(|e| e.source == Source::Hist) {
+            (e.desc, e.origin) = history_labels(e.count);
+        }
+        let has_tldr = db.count_source(Source::Tldr)? > 0;
         Ok(Self { entries, has_tldr })
     }
+}
+
+/// `mtime-in-nanoseconds:length` of a file, or `-` if it does not exist.
+/// It changes whenever the file does.
+fn fingerprint(path: Option<&std::path::Path>) -> String {
+    let Some(meta) = path.and_then(|p| std::fs::metadata(p).ok()) else {
+        return "-".into();
+    };
+    let nanos = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    format!("{nanos}:{}", meta.len())
+}
+
+/// Brings the cheats and history rows up to date, but only when their files changed since the
+/// last sync (compared by fingerprint, stored in `meta`), so a normal open reads nothing.
+fn sync(db: &mut Db, cfg: &Config) -> Result<()> {
+    let cheats_fp = fingerprint(Some(&config::cheats_path()?));
+    if db.meta("cheats_fp")?.as_deref() != Some(cheats_fp.as_str()) {
+        db.replace_source(Source::Cheat, &load_cheats()?, &[("cheats_fp", &cheats_fp)])?;
+    }
+
+    let hist_path = cfg.history_path();
+    let history_fp = format!(
+        "{}|{}|{}|{}",
+        cfg.history,
+        cfg.history_limit,
+        hist_path
+            .as_ref()
+            .map_or(String::new(), |p| p.display().to_string()),
+        fingerprint(hist_path.as_deref())
+    );
+    if db.meta("history_fp")?.as_deref() != Some(history_fp.as_str()) {
+        db.replace_source(Source::Hist, &load_history(cfg), &[("history_fp", &history_fp)])?;
+    }
+    Ok(())
 }

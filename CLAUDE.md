@@ -28,7 +28,8 @@ src/
   main.rs          clap: search, query, update, add, init {zsh,tmux}, config, eval
   i18n.rs          idioma de la interfaz (en por defecto, es o auto): `tr("English", "Español")`, `PISTASHO_LANG`
   config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
-  index.rs         Entry/Source; tldr desde zip → ~/.local/share/pistasho/index.json; cheats.toml; historial
+  db.rs            SQLite (`~/.local/share/pistasho/pistasho.db`): `entries`, `entries_fts` (FTS5, BM25, `remove_diacritics 2`), `meta`; `fts_query` con stemming ligero
+  index.rs         Entry/Source; tldr desde zip → db; cheats.toml e historial se resincronizan por huella (mtime + tamaño) al abrir
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
@@ -45,6 +46,8 @@ Detalles ya resueltos que conviene no romper:
 - Las traducciones se unen por comando normalizado: `desc` sale del primer idioma de `languages` y las demás descripciones más el resumen de la página van a `alt`, que se usa solo para buscar.
 - `placeholders::fill` deja `{{x}}` intacto cuando el valor es `None` o vacío.
 - El historial ignora ruido (`ls`, `cd`, `clear`…) y se queda con los `history_limit` más recientes.
+- La base es derivada: `update` rehace las filas de tldr; un `SCHEMA_VERSION` distinto la reinicia. Las columnas SQL son `description` y `uses` (no `desc` / `count`, palabras reservadas).
+- Historial de zsh: `HISTFILE` es una variable de zsh que casi nunca está exportada, así que el widget la pasa (`HISTFILE="$HISTFILE" command pistasho …`) y `Config::history_path` prueba `~/.zsh_history`, `~/.histfile`… si no hay variable.
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia

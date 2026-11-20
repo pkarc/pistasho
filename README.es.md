@@ -68,9 +68,9 @@ La interfaz va en inglés por defecto. Pon `language = "es"` en `config.toml` (o
 |---|---|
 | `~/.config/pistasho/config.toml` | Configuración (ver `pistasho config`) |
 | `~/.config/pistasho/cheats.toml` | Tu cheatsheet ([ejemplo](examples/cheats.toml)) |
-| `~/.local/share/pistasho/index.json` | Índice de tldr generado por `pistasho update` |
+| `~/.local/share/pistasho/pistasho.db` | Base SQLite: el índice de tldr (`pistasho update`) más tus atajos e historial, que se resincronizan cuando sus archivos cambian |
 
-El historial se lee de `history_file` en la configuración, `$HISTFILE` o `~/.zsh_history`. **No sale de tu máquina.**
+El historial se lee de `history_file` en la configuración, `$HISTFILE` o los sitios habituales (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **No sale de tu máquina.**
 
 ## Hoja de ruta
 

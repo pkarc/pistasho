@@ -194,8 +194,8 @@ pub fn cheats_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("cheats.toml"))
 }
 
-pub fn index_path() -> Result<PathBuf> {
-    Ok(data_dir()?.join("index.json"))
+pub fn db_path() -> Result<PathBuf> {
+    Ok(data_dir()?.join("pistasho.db"))
 }
 
 impl Config {
@@ -225,10 +225,30 @@ impl Config {
             return Some(expand_home(p));
         }
         if let Ok(p) = std::env::var("HISTFILE") {
-            return Some(PathBuf::from(p));
+            if !p.is_empty() {
+                return Some(expand_home(&p));
+            }
         }
-        dirs::home_dir().map(|h| h.join(".zsh_history"))
+        // zsh keeps HISTFILE as a plain shell variable, so a child process rarely sees it
+        // (the widget passes it along, but the tmux popup does not): try the usual places
+        dirs::home_dir().map(|h| history_fallback(&h, |p| p.exists()))
     }
+}
+
+/// First existing history file among the places zsh setups usually keep it, or
+/// `~/.zsh_history` when none exists yet.
+fn history_fallback(home: &std::path::Path, exists: impl Fn(&std::path::Path) -> bool) -> PathBuf {
+    const CANDIDATES: [&str; 4] = [
+        ".zsh_history",
+        ".histfile",
+        ".local/share/zsh/history",
+        ".cache/zsh/history",
+    ];
+    CANDIDATES
+        .iter()
+        .map(|c| home.join(c))
+        .find(|p| exists(p))
+        .unwrap_or_else(|| home.join(CANDIDATES[0]))
 }
 
 pub fn expand_home(p: &str) -> PathBuf {
@@ -484,6 +504,20 @@ pub fn wizard() -> Result<(Config, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_history_in_usual_places() {
+        let home = std::path::Path::new("/home/u");
+        let only = |name: &'static str| move |p: &std::path::Path| p == home.join(name);
+        assert_eq!(history_fallback(home, only(".histfile")), home.join(".histfile"));
+        assert_eq!(
+            history_fallback(home, only(".local/share/zsh/history")),
+            home.join(".local/share/zsh/history")
+        );
+        // ~/.zsh_history wins when several exist, and is the answer when none does
+        assert_eq!(history_fallback(home, |_| true), home.join(".zsh_history"));
+        assert_eq!(history_fallback(home, |_| false), home.join(".zsh_history"));
+    }
 
     #[test]
     fn parse_height() {

@@ -10,7 +10,7 @@ pub fn zsh(cfg: &Config) -> String {
 
 _pistasho_search() {{
   local out
-  out="$(command pistasho search --query "$LBUFFER" </dev/tty)"
+  out="$(HISTFILE="$HISTFILE" command pistasho search --query "$LBUFFER" </dev/tty)"
   local ret=$?
   if (( ret == 0 )) && [[ -n "$out" ]]; then
     BUFFER="$out"

@@ -1,4 +1,5 @@
 mod config;
+mod db;
 mod eval;
 mod history;
 mod i18n;

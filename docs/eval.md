@@ -44,3 +44,14 @@ Qué lo bajó (de ~175 a ~25 ms):
 Límites conocidos:
 - La mejora de los hilos depende de los núcleos: con menos de 16 las teclas con muchos candidatos serán más lentas. El caso peor medido aquí es ~46 ms.
 - Con pocas letras (`t`, `ta`) casi todo coincide, así que la primera tecla cuesta ~20–25 ms aunque se reparta en hilos. La fase 2 (FTS5 + BM25) cambia este perfil de coste.
+
+## Tarea 2.1 · índice SQLite + FTS5 (2026-11-19)
+
+| Medida | Antes (`index.json`) | Ahora (`pistasho.db`) |
+|---|---|---|
+| Cargar el índice | ~50 ms | ~45 ms (con 2216 comandos de historial incluidos) |
+| Apertura total (carga + buscador) | ~67 ms | 62–66 ms |
+| `eval` top-1 / top-3 | 18% / 28% | 18% / 28% (sin cambios, como se esperaba: el buscador difuso es el mismo) |
+| Tamaño en disco | 10.9 MB | 15.9 MB (incluye el índice de texto completo) |
+
+El ranking FTS5 / BM25 aún no se mide con `eval`: lo usa `pistasho ask`, que es la tarea 2.2. Primer vistazo sobre la base real (consultas armadas con `fts_query`): `compresión` → `compress`, `lzop`; `comprimir carpeta` → `carp`; `puertos escuchando` → `rcat`, `mysqld`, `socat` (ruido). Con palabras vacías y pesos por columna esto debería mejorar; se mide en 2.2.
