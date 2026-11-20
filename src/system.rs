@@ -74,8 +74,13 @@ pub fn missing_binaries(cmd: &str) -> Vec<String> {
 
 #[derive(Debug, PartialEq)]
 enum Tok {
-    /// A word, and the commands of the `$(...)` / backtick substitutions inside it.
-    Word { text: String, subs: Vec<String> },
+    /// A word, the commands of the `$(...)` / backtick substitutions inside it, and where it sits
+    /// in the command (char indices, quotes included).
+    Word {
+        text: String,
+        subs: Vec<String>,
+        span: (usize, usize),
+    },
     /// `|`, `||`, `&&`, `&`, `;`, newline, `(`, `)`: the next word starts a command.
     Sep,
     /// `>`, `>>`, `<`, `<<`, `2>&1`…: the next word is a target, not a command.
@@ -137,17 +142,28 @@ fn tokenize(cmd: &str) -> Vec<Tok> {
     let mut in_word = false;
     let mut i = 0;
 
-    let flush = |toks: &mut Vec<Tok>, cur: &mut String, subs: &mut Vec<String>, in_word: &mut bool| {
+    let mut word_start = 0;
+
+    let flush = |toks: &mut Vec<Tok>,
+                 cur: &mut String,
+                 subs: &mut Vec<String>,
+                 in_word: &mut bool,
+                 start: usize,
+                 end: usize| {
         if *in_word {
             toks.push(Tok::Word {
                 text: std::mem::take(cur),
                 subs: std::mem::take(subs),
+                span: (start, end.min(n)),
             });
             *in_word = false;
         }
     };
 
     while i < n {
+        if !in_word {
+            word_start = i;
+        }
         let c = chars[i];
         let next = chars.get(i + 1).copied();
         match c {
@@ -240,13 +256,13 @@ fn tokenize(cmd: &str) -> Vec<Tok> {
                 }
                 continue;
             }
-            ' ' | '\t' => flush(&mut toks, &mut cur, &mut subs, &mut in_word),
+            ' ' | '\t' => flush(&mut toks, &mut cur, &mut subs, &mut in_word, word_start, i),
             '\n' | ';' | '(' | ')' => {
-                flush(&mut toks, &mut cur, &mut subs, &mut in_word);
+                flush(&mut toks, &mut cur, &mut subs, &mut in_word, word_start, i);
                 toks.push(Tok::Sep);
             }
             '|' | '&' => {
-                flush(&mut toks, &mut cur, &mut subs, &mut in_word);
+                flush(&mut toks, &mut cur, &mut subs, &mut in_word, word_start, i);
                 if c == '&' && next == Some('>') {
                     // `&>file` redirects both streams
                     toks.push(Tok::Redir);
@@ -269,7 +285,7 @@ fn tokenize(cmd: &str) -> Vec<Tok> {
                     subs.clear();
                     in_word = false;
                 } else {
-                    flush(&mut toks, &mut cur, &mut subs, &mut in_word);
+                    flush(&mut toks, &mut cur, &mut subs, &mut in_word, word_start, i);
                 }
                 while matches!(chars.get(i + 1), Some('<' | '>')) {
                     i += 1;
@@ -286,7 +302,7 @@ fn tokenize(cmd: &str) -> Vec<Tok> {
         }
         i += 1;
     }
-    flush(&mut toks, &mut cur, &mut subs, &mut in_word);
+    flush(&mut toks, &mut cur, &mut subs, &mut in_word, word_start, i);
     toks
 }
 
@@ -350,18 +366,19 @@ fn names_a_program(word: &str) -> bool {
         && !word.starts_with(['$', '!', '~', '-', '.', '*', '%', '@', '='])
 }
 
-/// The programs a shell command runs, in the order they appear, without repeats. `sudo`, `env`,
-/// `xargs` and similar wrappers are skipped in favor of what they run.
-///
-/// `sudo tar czf a.tgz dir` → `tar`; `ss -tlnp | grep :80` → `ss`, `grep`;
-/// `find . | xargs rg x` → `find`, `rg`; `FOO=1 make` → `make`.
-pub fn binaries(cmd: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    let mut add = |name: String| {
-        if !found.contains(&name) {
-            found.push(name);
-        }
-    };
+/// A program a command runs, and where its word sits in the command (char indices, quotes
+/// included). Programs inside `$(...)` have no span: it would be relative to the inner text.
+#[derive(Debug, PartialEq)]
+pub struct Program {
+    pub name: String,
+    pub span: Option<(usize, usize)>,
+}
+
+/// The programs a shell command runs, in the order they appear, repeats included.
+/// `sudo`, `env`, `xargs` and similar wrappers are skipped in favor of what they run.
+pub fn programs(cmd: &str) -> Vec<Program> {
+    let mut found: Vec<Program> = Vec::new();
+    let mut add = |name: String, span: Option<(usize, usize)>| found.push(Program { name, span });
 
     let mut at_start = true;
     let mut no_command = false;
@@ -369,7 +386,7 @@ pub fn binaries(cmd: &str) -> Vec<String> {
     let mut pending: Option<(Wrapper, bool, bool)> = None; // (wrapper, expecting an option value, options ended)
 
     for tok in tokenize(cmd) {
-        let (text, subs) = match tok {
+        let (text, subs, span) = match tok {
             Tok::Sep => {
                 at_start = true;
                 no_command = false;
@@ -381,7 +398,7 @@ pub fn binaries(cmd: &str) -> Vec<String> {
                 skip_target = true;
                 continue;
             }
-            Tok::Word { text, subs } => (text, subs),
+            Tok::Word { text, subs, span } => (text, subs, span),
         };
 
         if skip_target {
@@ -404,27 +421,73 @@ pub fn binaries(cmd: &str) -> Vec<String> {
                 // the payload: handle it as the start of a command
                 pending = None;
                 at_start = true;
-                handle_command_word(&text, &mut at_start, &mut no_command, &mut pending, &mut add);
+                handle_command_word(
+                    &text,
+                    span,
+                    &mut at_start,
+                    &mut no_command,
+                    &mut pending,
+                    &mut add,
+                );
             }
         } else if at_start {
-            handle_command_word(&text, &mut at_start, &mut no_command, &mut pending, &mut add);
+            handle_command_word(
+                &text,
+                span,
+                &mut at_start,
+                &mut no_command,
+                &mut pending,
+                &mut add,
+            );
         }
 
         for sub in subs {
-            for name in binaries(&sub) {
-                add(name);
+            for p in programs(&sub) {
+                add(p.name, None);
             }
         }
     }
     found
 }
 
+/// The names of the programs a shell command runs, in the order they appear, without repeats.
+///
+/// `sudo tar czf a.tgz dir` → `tar`; `ss -tlnp | grep :80` → `ss`, `grep`;
+/// `find . | xargs rg x` → `find`, `rg`; `FOO=1 make` → `make`.
+pub fn binaries(cmd: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for p in programs(cmd) {
+        if !names.contains(&p.name) {
+            names.push(p.name);
+        }
+    }
+    names
+}
+
+/// `cmd` with the program words named in `renames` replaced (`fd` → `fdfind`), wherever they
+/// stand in the command. Programs inside `$(...)` are left alone.
+pub fn rename_programs(cmd: &str, renames: &std::collections::HashMap<String, String>) -> String {
+    let mut chars: Vec<char> = cmd.chars().collect();
+    let mut spots: Vec<(usize, usize, &String)> = programs(cmd)
+        .into_iter()
+        .filter_map(|p| Some((p.span?, renames.get(&p.name)?)))
+        .map(|((start, end), to)| (start, end, to))
+        .collect();
+    // from the end, so the earlier positions stay valid
+    spots.sort_by_key(|spot| std::cmp::Reverse(spot.0));
+    for (start, end, to) in spots {
+        chars.splice(start..end, to.chars());
+    }
+    chars.into_iter().collect()
+}
+
 fn handle_command_word(
     text: &str,
+    span: (usize, usize),
     at_start: &mut bool,
     no_command: &mut bool,
     pending: &mut Option<(Wrapper, bool, bool)>,
-    add: &mut impl FnMut(String),
+    add: &mut impl FnMut(String, Option<(usize, usize)>),
 ) {
     if is_assignment(text) || SKIP_KEYWORDS.contains(&text) {
         // still waiting for the command itself
@@ -437,7 +500,7 @@ fn handle_command_word(
     } else {
         *at_start = false;
         if names_a_program(text) {
-            add(text.to_string());
+            add(text.to_string(), Some(span));
         }
     }
 }
@@ -586,6 +649,60 @@ mod tests {
         eq("? x", &[]);
         eq("\\", &[]);
         assert!(is_builtin(":"));
+    }
+
+    fn renames(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn programs_know_where_they_are() {
+        let cmd = "sudo fd -e rs | rg x";
+        let p = programs(cmd);
+        assert_eq!(
+            p.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["fd", "rg"]
+        );
+        let chars: Vec<char> = cmd.chars().collect();
+        let text = |s: (usize, usize)| chars[s.0..s.1].iter().collect::<String>();
+        assert_eq!(text(p[0].span.unwrap()), "fd");
+        assert_eq!(text(p[1].span.unwrap()), "rg");
+        // programs inside a substitution have no position
+        let inner = programs("echo $(fd x)");
+        assert_eq!(inner[1].name, "fd");
+        assert_eq!(inner[1].span, None);
+    }
+
+    #[test]
+    fn renaming_replaces_program_words_only() {
+        let r = renames(&[("fd", "fdfind")]);
+        assert_eq!(rename_programs("fd -e rs", &r), "fdfind -e rs");
+        assert_eq!(
+            rename_programs("sudo fd x | fd y", &r),
+            "sudo fdfind x | fdfind y"
+        );
+        assert_eq!(
+            rename_programs("rg fd src", &r),
+            "rg fd src",
+            "an argument is not a program"
+        );
+        assert_eq!(rename_programs("echo fd", &r), "echo fd");
+        assert_eq!(
+            rename_programs("echo $(fd x) | fd y", &r),
+            "echo $(fd x) | fdfind y"
+        );
+        assert_eq!(rename_programs("FOO=1 fd x", &r), "FOO=1 fdfind x");
+        assert_eq!(rename_programs("fd", &r), "fdfind");
+        assert_eq!(rename_programs("\"fd\" x", &r), "fdfind x");
+        assert_eq!(
+            rename_programs("ls ñandú | fd é", &r),
+            "ls ñandú | fdfind é",
+            "positions are chars, not bytes"
+        );
+        assert_eq!(rename_programs("fd x", &renames(&[])), "fd x");
     }
 
     #[test]

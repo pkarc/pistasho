@@ -6,6 +6,7 @@
 
 use crate::db::{self, Db, Weights, DEFAULT_WEIGHTS};
 use crate::index::{Entry, Source};
+use crate::packages;
 use crate::placeholders;
 use crate::system;
 use anyhow::Result;
@@ -38,6 +39,9 @@ pub struct Candidate {
     /// Programs the command runs that are not installed (shell builtins do not count).
     /// Empty means the candidate can run as it is.
     pub missing: Vec<String>,
+    /// Programs this machine has under another name, put right when the command is used:
+    /// `("fd", "fdfind")`. They do not count as missing.
+    pub renames: Vec<(String, String)>,
 }
 
 /// Words that say nothing about which command is wanted, Spanish and English. Compared without
@@ -100,6 +104,7 @@ pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Resul
             score: score * boost(&entry, params),
             entry,
             missing: Vec::new(),
+            renames: Vec::new(),
         })
         .collect();
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -109,7 +114,9 @@ pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Resul
     ranked.truncate(limit);
     // looked up after trimming: only the candidates that will be shown cost a PATH search
     for c in &mut ranked {
-        c.missing = system::missing_binaries(&c.entry.cmd);
+        let adapted = packages::adapt(&c.entry.cmd);
+        c.missing = system::missing_binaries(&adapted.command);
+        c.renames = adapted.renames;
     }
     Ok(ranked)
 }

@@ -55,6 +55,7 @@ pistasho search [-q texto] [--send-to PANE] [--no-fill]   # interfaz; imprime el
 pistasho query texto de búsqueda [-n 10] [--timing]        # sin interfaz, para pruebas; --timing imprime tiempos
 pistasho update                                             # descarga tldr y reconstruye el índice
 pistasho add 'fuser -k {{puerto}}/tcp' -d 'Matar el proceso de un puerto' -t red
+pistasho doctor [programas…] [--table]                      # SO, gestor de paquetes y cómo conseguir un programa que falta
 pistasho init zsh | tmux
 pistasho config
 pistasho ask cómo comprimo una carpeta                     # mejor comando para una pregunta (--json -n 5: candidatos)

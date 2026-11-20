@@ -55,6 +55,7 @@ pistasho search [-q text] [--send-to PANE] [--no-fill]   # interface; prints the
 pistasho query search text [-n 10] [--timing]            # no interface, for testing; --timing prints timings
 pistasho update                                           # downloads tldr and rebuilds the index
 pistasho add 'fuser -k {{port}}/tcp' -d 'Kill the process on a port' -t net
+pistasho doctor [programs…] [--table]                     # OS, package manager, and how to get a missing program
 pistasho init zsh | tmux
 pistasho config
 pistasho ask how do I compress a folder                    # best command for a question (--json -n 5: candidates)

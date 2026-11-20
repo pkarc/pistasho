@@ -5,6 +5,7 @@ mod eval;
 mod history;
 mod i18n;
 mod index;
+mod packages;
 mod placeholders;
 mod prompt;
 mod search;
@@ -77,6 +78,14 @@ enum Command {
     },
     /// Configuration wizard
     Config,
+    /// Shows the OS, the package manager and what is needed to get the given programs
+    Doctor {
+        /// Programs to look up (none: only the OS and the package manager)
+        programs: Vec<String>,
+        /// Check every command of the built-in package table against the package manager
+        #[arg(long)]
+        table: bool,
+    },
     /// Measures searcher accuracy over a set of questions
     Eval {
         #[arg(default_value = "eval/questions.toml")]
@@ -253,6 +262,10 @@ fn run() -> Result<ExitCode> {
             );
             Ok(ExitCode::SUCCESS)
         }
+        Command::Doctor { programs, table } => {
+            doctor(&programs, table);
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Eval { file, mode, weights } => {
             let cfg = Config::load()?;
             let idx = Index::load(&cfg)?;
@@ -285,7 +298,8 @@ fn run() -> Result<ExitCode> {
                 return match explore_list(&cfg)? {
                     None => Ok(ExitCode::from(130)),
                     Some(cmd) => {
-                        emit(format, &cmd, "", "");
+                        let (cmd, message) = adapt_result(cmd, String::new());
+                        emit(format, &cmd, &message, "");
                         Ok(ExitCode::SUCCESS)
                     }
                 };
@@ -312,6 +326,8 @@ fn run() -> Result<ExitCode> {
                         "score": c.score,
                         "available": c.missing.is_empty(),
                         "missing": c.missing,
+                        "renames": c.renames,
+                        "install": c.missing.first().and_then(|bin| install_json(bin)),
                     })).collect::<Vec<_>>(),
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
@@ -462,12 +478,105 @@ fn ask_on_prompt(
             (command, message, question)
         }
     };
+    let (command, message) = adapt_result(command, message);
     if let Some(pane) = send_to {
         send_to_tmux(pane, &command)?;
         return Ok(ExitCode::SUCCESS);
     }
     emit(format, &command, &message, &question);
     Ok(ExitCode::SUCCESS)
+}
+
+/// Puts right the programs this machine has under another name (`fd` → `fdfind` on Debian) in
+/// the command about to be handed over, and says so in the message.
+fn adapt_result(command: String, mut message: String) -> (String, String) {
+    let adapted = packages::adapt(&command);
+    for (asked, installed) in &adapted.renames {
+        if !message.is_empty() {
+            message.push_str(" · ");
+        }
+        message.push_str(&format!("{asked} → {installed}"));
+    }
+    (adapted.command, message)
+}
+
+/// The install plan for a program that is not installed, as JSON for `ask --json`.
+fn install_json(bin: &str) -> Option<serde_json::Value> {
+    let plan = packages::plan_install(bin)?;
+    Some(serde_json::json!({
+        "manager": plan.manager.name(),
+        "package": plan.package,
+        "command": plan.display(),
+    }))
+}
+
+/// `pistasho doctor`: what this machine is and what it would take to get a program.
+fn doctor(programs: &[String], table: bool) {
+    let os = packages::detect_os();
+    let manager = packages::Manager::detect();
+    let os_line = match &os {
+        Some(o) if !o.pretty_name.is_empty() => format!("{} ({})", o.pretty_name, o.id),
+        Some(o) => o.id.clone(),
+        None => tr("unknown", "desconocido").to_string(),
+    };
+    println!("{:<9} {os_line}", tr("OS:", "SO:"));
+    println!(
+        "{:<9} {}",
+        tr("Manager:", "Gestor:"),
+        manager.map_or(tr("none known", "ninguno conocido"), |m| m.name())
+    );
+    if table {
+        let Some(manager) = manager else { return };
+        for command in packages::table_commands() {
+            let package = packages::package_for(&command, manager);
+            let ok = packages::exists(manager, &package).unwrap_or(false);
+            println!("{} {command} → {package}", if ok { "OK     " } else { "MISSING" });
+        }
+        return;
+    }
+    for bin in programs {
+        println!("{bin:<14} {}", describe_program(bin, manager));
+    }
+}
+
+/// One line about a program: installed, a builtin, installed under another name, or how to get it.
+fn describe_program(bin: &str, manager: Option<packages::Manager>) -> String {
+    if system::is_builtin(bin) {
+        return tr("shell builtin", "comando del shell").to_string();
+    }
+    if let Some(path) = system::which(bin) {
+        return format!("{} ({})", tr("installed", "instalado"), path.display());
+    }
+    let Some(manager) = manager else {
+        return tr(
+            "not installed; no package manager known",
+            "no instalado; sin gestor de paquetes conocido",
+        )
+        .to_string();
+    };
+    if let Some(other) = packages::installed_name(bin, manager) {
+        if system::which(other).is_some() {
+            return format!(
+                "{} {other}",
+                tr("installed under another name:", "instalado con otro nombre:")
+            );
+        }
+    }
+    match packages::plan_install(bin) {
+        Some(plan) => format!(
+            "{} · {} {} · {}",
+            tr("not installed", "no instalado"),
+            tr("package", "paquete"),
+            plan.package,
+            plan.display()
+        ),
+        None => format!(
+            "{} · {} ({})",
+            tr("not installed", "no instalado"),
+            tr("no package found", "no se encontró paquete"),
+            manager.name()
+        ),
+    }
 }
 
 /// The list of everything (cheats, then history, then tldr) with a filter. `None` if cancelled.
@@ -518,6 +627,7 @@ fn ask_alternatives(cfg: &Config, question: &str, current: &str, format: OutputF
         None => Ok(ExitCode::from(130)),
         Some((cmd, origin)) => {
             let message = format!("✓ {} · {origin}", tr("replaced", "reemplazado"));
+            let (cmd, message) = adapt_result(cmd, message);
             emit(format, &cmd, &message, question);
             Ok(ExitCode::SUCCESS)
         }

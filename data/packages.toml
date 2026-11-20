@@ -1,0 +1,113 @@
+# Command → package, for the commands whose package is not simply named like the command.
+# Anything not listed here is assumed to be packaged under its own name; the package manager is
+# asked whether the package exists before it is ever proposed (see `packages::exists`).
+#
+# [command]
+# package = { default = "x", apt = "y", dnf = "z" }   # `default` covers the managers not named
+# binary  = { apt = "xbin" }                          # the program is installed under another name
+#
+# Managers: apt (Debian, Ubuntu…), pacman (Arch…), dnf (Fedora, RHEL…), zypper (openSUSE…).
+
+[rg]
+package = { default = "ripgrep" }
+
+[fd]
+package = { default = "fd", apt = "fd-find", dnf = "fd-find" }
+binary = { apt = "fdfind" }
+
+[bat]
+package = { default = "bat" }
+binary = { apt = "batcat" }
+
+[delta]
+package = { default = "git-delta" }
+
+[python]
+package = { default = "python3", pacman = "python" }
+binary = { default = "python3" }
+
+[pip]
+package = { default = "python3-pip", pacman = "python-pip" }
+
+[pip3]
+package = { default = "python3-pip", pacman = "python-pip" }
+
+[nvim]
+package = { default = "neovim" }
+
+[vim]
+package = { default = "vim", dnf = "vim-enhanced" }
+
+["g++"]
+package = { default = "g++", dnf = "gcc-c++", pacman = "gcc", zypper = "gcc-c++" }
+
+[docker]
+package = { default = "docker", apt = "docker.io", dnf = "moby-engine" }
+
+# iproute2
+[ip]
+package = { default = "iproute2", dnf = "iproute" }
+
+[ss]
+package = { default = "iproute2", dnf = "iproute" }
+
+# DNS tools
+[dig]
+package = { default = "bind-utils", apt = "dnsutils", pacman = "bind" }
+
+[nslookup]
+package = { default = "bind-utils", apt = "dnsutils", pacman = "bind" }
+
+[host]
+package = { default = "bind-utils", apt = "dnsutils", pacman = "bind" }
+
+[ifconfig]
+package = { default = "net-tools" }
+
+[netstat]
+package = { default = "net-tools" }
+
+# psmisc
+[fuser]
+package = { default = "psmisc" }
+
+[killall]
+package = { default = "psmisc" }
+
+[pstree]
+package = { default = "psmisc" }
+
+# procps
+[ps]
+package = { default = "procps", dnf = "procps-ng", pacman = "procps-ng" }
+
+[pgrep]
+package = { default = "procps", dnf = "procps-ng", pacman = "procps-ng" }
+
+[pkill]
+package = { default = "procps", dnf = "procps-ng", pacman = "procps-ng" }
+
+[free]
+package = { default = "procps", dnf = "procps-ng", pacman = "procps-ng" }
+
+[watch]
+package = { default = "procps", dnf = "procps-ng", pacman = "procps-ng" }
+
+[sensors]
+package = { default = "lm-sensors", dnf = "lm_sensors", pacman = "lm_sensors", zypper = "sensors" }
+
+# filesystem tools
+["mkfs.ext4"]
+package = { default = "e2fsprogs" }
+
+["mkfs.vfat"]
+package = { default = "dosfstools" }
+
+["mkfs.ntfs"]
+package = { default = "ntfs-3g", dnf = "ntfsprogs" }
+
+[xz]
+package = { default = "xz", apt = "xz-utils" }
+
+[7z]
+package = { default = "p7zip", apt = "p7zip-full", pacman = "7zip", dnf = "7zip", zypper = "7zip" }

@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta) y 2.4 (verificación de binarios); 5.1 adelantada. Pendientes de la fase 2: 2.5 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
+**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes); 5.1 adelantada. Pendientes de la fase 2: 2.6 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -25,12 +25,13 @@ La lista detallada de tareas, con tamaños y criterios de "lista cuando", está 
 
 ```
 src/
-  main.rs          clap: search, query, update, add, init {zsh,tmux}, config, eval
+  main.rs          clap: search, query, ask, update, add, init {zsh,tmux}, config, doctor, eval
   i18n.rs          idioma de la interfaz (en por defecto, es o auto): `tr("English", "Español")`, `PISTASHO_LANG`
   config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
   db.rs            SQLite (`~/.local/share/pistasho/pistasho.db`): `entries`, `entries_fts` (FTS5, BM25, `remove_diacritics 2`), `meta`; `fts_query` con stemming ligero
   ask.rs           `pistasho ask`: palabras vacías, BM25 (`db::fts_search_words`), boost de mío / historial, dedupe por forma del comando
   system.rs        qué tiene la máquina: `which_in` (busca en PATH sin lanzar procesos), `binaries(cmd)` (los programas que ejecuta un comando: tokenizador con comillas, `$(...)`, tuberías, redirecciones, asignaciones, palabras clave y envoltorios `sudo`/`env`/`xargs`…), `missing_binaries`
+  packages.rs      SO (`/etc/os-release`: `ID`, `ID_LIKE`) → gestor (apt, pacman, dnf, zypper); tabla curada `data/packages.toml` (comando → paquete por gestor, y programas que la distro instala con otro nombre); `exists` (pregunta al gestor); `adapt` (reescribe `fd` → `fdfind`); `plan_install` (el comando de instalación, sin ejecutarlo)
   prompt.rs        la línea de pregunta de `Ctrl-Space`: toma la línea del prompt en /dev/tty (sin pantalla alternativa), editor simple (solo al final), spinner `resolving…` si tarda > 150 ms
   index.rs         Entry/Source; tldr desde zip → db; cheats.toml e historial se resincronizan por huella (mtime + tamaño) al abrir
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
@@ -55,6 +56,8 @@ Detalles ya resueltos que conviene no romper:
 - Widget de `Ctrl-Space`: `pistasho ask --prompt --format zsh --initial "$BUFFER"` imprime `comando NUL mensaje NUL pregunta` (zsh conserva los NUL en `$(...)`); código 0 = hay comando, 1 = sin coincidencia (la salida es el mensaje), 130 = cancelado. El widget llama a `zle reset-prompt` y luego a `zle -M` (al revés se borra el mensaje). Todo se dibuja en /dev/tty; stdout solo lleva el resultado. `"^ "` y `"^@"` son la misma tecla en zsh. `keys.search` ya no existe (los config viejos con esa clave la ignoran).
 - Alternativas: el widget guarda `_PISTASHO_LAST_Q` y `_PISTASHO_LAST_CMD`; si `$BUFFER` sigue siendo exactamente el último comando, `Ctrl-Space` llama a `ask --alternatives --current "$BUFFER" -- "$_PISTASHO_LAST_Q"`; si no, es una pregunta nueva. Se borran en `zle-line-finish` (`add-zle-hook-widget`). La lista parte de los 20 mejores candidatos de BM25 (`ListMode::Alternatives`, índices en las entradas cargadas) con el comando actual seleccionado (`placeholders::matches_template` lo encuentra aunque ya esté relleno); con el filtro vacío muestran los candidatos, al escribir se busca en todo con el buscador difuso. `ask --explore` abre `ListMode::Explore`.
 - Binarios de un comando (`system::binaries`): los `{{marcadores}}` son una sola pieza (su `|` y sus espacios no son sintaxis de shell; sin eso salían programas falsos como `id}}`), los envoltorios (`sudo`, `env`, `xargs`, `nohup`, `time`, `nice`…) se saltan por lo que ejecutan, los builtins del shell nunca cuentan como faltantes, y los alias o funciones del usuario no se ven desde fuera (un comando que es alias saldría como faltante). `ask` rellena `Candidate.missing`; `--json` lo expone como `available` / `missing` y el mensaje bajo el prompt avisa `⚠ ncdu not installed`. No cambia el orden de los candidatos.
+- Paquetes (`packages.rs`, `data/packages.toml`): la tabla solo lista las excepciones; lo que no está se supone empaquetado con su propio nombre y el gestor lo confirma antes de proponerlo (`apt-cache policy` mira la línea `Candidate:` porque sale con 0 aunque no exista; `pacman -Si` y `dnf -q info` con su código de salida; `zypper what-provides`, no `info`, porque openSUSE llama `python313` al paquete y ofrece `python3` como capacidad). Los comandos de instalación no piden confirmación otra vez (`-y`, `--noconfirm`, `--non-interactive`) porque pistasho ya preguntó mostrando el comando exacto. **Al cambiar la tabla, validarla** con `pistasho doctor --table` en un contenedor de cada familia (`docker run --rm -v ~/.cargo/bin/pistasho:/usr/local/bin/pistasho:ro archlinux ...`; en Arch hace falta `pacman -Sy` antes y en openSUSE `zypper refresh`): así se encontraron `docker` → `moby-engine` y `7z` → `7zip` en Fedora, y los nombres de openSUSE.
+- `adapt` reescribe los programas que faltan pero existen con otro nombre en esa distro (solo `fd`, `bat` en Debian/Ubuntu y `python` → `python3`); se aplica al comando final (ya relleno) en `ask_on_prompt`, `ask_alternatives`, explorar y el popup, y el mensaje lo dice (`fd → fdfind`). `Candidate.missing` se calcula sobre el comando adaptado, así que no marca como faltante lo que se puede ejecutar con la reescritura.
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia
