@@ -101,7 +101,7 @@ pub fn aggregate(cmds: &[String], limit: usize) -> Vec<HistItem> {
             last,
         })
         .collect();
-    items.sort_by(|a, b| b.last.cmp(&a.last));
+    items.sort_by_key(|a| std::cmp::Reverse(a.last));
     items.truncate(limit);
     items
 }
