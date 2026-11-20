@@ -1,127 +1,130 @@
-# pistasho: context for Claude Code
+# pistasho: contexto para Claude Code
 
-[English](CLAUDE.md) · [Español](CLAUDE.es.md)
+> *pista* + *sh*: la pista del comando que necesitas, sin salir de la terminal.
 
-> *pista* + *sh*: the hint for the command you need, without leaving the terminal.
+Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o un popup de tmux) y tener el comando en el prompt; si no es el correcto, `Ctrl-Space` otra vez muestra las alternativas. Decisión de diseño: [ADR 0001](docs/adr/0001-question-mode-single-entry.md). Repo: `pkarc/pistasho`. Licencia: MIT OR Apache-2.0.
 
-A Rust tool to find Linux commands from zsh and tmux with a keyboard shortcut. Repo: `pkarc/pistasho`. License: MIT OR Apache-2.0.
+## Principios que no se negocian
 
-## Non-negotiable principles
+1. **Nunca ejecutar el comando sugerido.** pistasho solo lo escribe en el prompt (`BUFFER` de zle o `tmux send-keys -l` sin Enter). El Enter final siempre lo da el usuario.
+2. **Lo único que se ejecuta por cuenta propia es una instalación, y siempre con confirmación explícita** que muestra el comando exacto. Solo gestores oficiales (apt, pacman, dnf, zypper), nunca `curl | sh`.
+3. **Privacidad:** a un modelo remoto solo se envían la pregunta, el OS y el shell. Nunca el historial, archivos ni rutas. El filtrado de datos (por ejemplo `fc -ln 1 | grep root`) ocurre en local.
+4. **La interfaz se dibuja en `/dev/tty`; stdout lleva solo el comando elegido.** Así el widget de zsh lo captura con `$(...)`.
+5. **Idioma.** El código (identificadores y comentarios) va en inglés. El README tiene dos versiones alineadas (`README.md` en inglés y `README.es.md`). La herramienta habla inglés por defecto y también español: se elige con `language = "es"` o `PISTASHO_LANG=es`, o con `language = "auto"` se detecta del idioma del sistema (`LC_ALL`, `LC_MESSAGES`, `LANG`). Toda cadena visible se escribe en el sitio de uso como `tr("English", "Español")` (`src/i18n.rs`), así que una cadena nueva necesita ambos idiomas. Las decisiones (`docs/adr/`), el plan (`PLAN.md`) y este contexto para el agente van **solo en español**, en un único archivo, sin gemelos en inglés.
+6. **Linux primero.** macOS (brew) queda para después.
+7. Para la velocidad y la calidad: **medir con `pistasho eval` antes de agregar complejidad.**
+8. **Una sola entrada (`Ctrl-Space`).** El caso normal nunca debe costar más que pregunta + Enter.
 
-1. **Never run the suggested command.** pistasho only writes it to the prompt (zle `BUFFER` or `tmux send-keys -l` without Enter). The final Enter is always the user's.
-2. **The only thing run on its own is an install, and always with explicit confirmation** showing the exact command. Official package managers only (apt, pacman, dnf, zypper), never `curl | sh`.
-3. **Privacy:** only the question, the OS and the shell are sent to a remote model. Never history, files or paths. Data filtering (e.g. `fc -ln 1 | grep root`) happens locally.
-4. **The UI is drawn on `/dev/tty`; stdout carries only the chosen command.** That way the zsh widget captures it with `$(...)`.
-5. **English by default, Spanish kept aligned.** Docs, code identifiers, comments and the default UI are in English. The Spanish UI is selected with `language = "es"` or `PISTASHO_LANG=es`; every user-facing string is written at the call site as `tr("English", "Español")` (`src/i18n.rs`), so a new string needs both. Every doc has a Spanish twin (`README.es.md`, `CLAUDE.es.md`, `PLAN.es.md`); any change to one must be applied to the other in the same commit.
-6. **Linux first.** macOS (brew) comes later.
-7. For speed and quality: **measure with `pistasho eval` before adding complexity.**
+## Estado actual
 
-## Current state
+**Las fases 0 y 1 están escritas y ya compilan con dependencias reales** (tarea 1.1 de `PLAN.md`: build, clippy, tests y CI en verde). Aún sin verificar de punta a punta: `pistasho config`, `pistasho update`, el widget de zsh y el popup de tmux (tarea 1.2).
 
-**Phases 0 and 1 are written and now compile with real dependencies** (task 1.1 of `PLAN.md`: build, clippy, tests and CI all green). Not yet verified end to end: `pistasho config`, `pistasho update`, the zsh widget and the tmux popup (task 1.2).
+La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
-The detailed task list, with sizes and "done when" criteria, is in `PLAN.md`. Mark tasks `[x]` and log plan changes in its Notes section.
-
-## Structure
+## Estructura
 
 ```
 src/
   main.rs          clap: search, query, update, add, init {zsh,tmux}, config, eval
-  i18n.rs          UI language (en default, es): `tr("English", "Español")`, `PISTASHO_LANG`
-  config.rs        ~/.config/pistasho/config.toml + interactive wizard (`pistasho config`)
-  index.rs         Entry/Source; tldr from zip → ~/.local/share/pistasho/index.json; cheats.toml; history
-  tldr.rs          tldr-pages markdown parser + pages[.lang]/platform/x.md paths   (no deps)
-  placeholders.rs  {{placeholders}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (no deps)
-  history.rs       ~/.zsh_history: unmetafy (0x83), extended format, multiline, aggregation (no deps)
-  search.rs        nucleo-matcher + bonuses (exact tool +80, mine +40, history up to +40)
-  tui.rs           ratatui on /dev/tty: compact inline viewport (zsh) or alternate screen (tmux popup), search mode and placeholder fill mode
-  shell.rs         code printed by `init zsh` (zle widget) and `init tmux` (display-popup)
-  eval.rs          top-1 / top-3 per tool over eval/questions.toml
-eval/questions.toml   40 Spanish questions with their correct tools (goal: about 100); keys `question` / `tools`
+  i18n.rs          idioma de la interfaz (en por defecto, es o auto): `tr("English", "Español")`, `PISTASHO_LANG`
+  config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
+  index.rs         Entry/Source; tldr desde zip → ~/.local/share/pistasho/index.json; cheats.toml; historial
+  tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
+  placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
+  history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
+  search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40)
+  tui.rs           ratatui en /dev/tty: lista de candidatos (modos alternativas / explorar) + relleno de marcadores, en línea debajo del prompt. Hoy sigue siendo el buscador de `Ctrl-G`; refactor en la tarea 2.3b
+  shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Hoy aún genera el widget de `Ctrl-G`; se reemplaza en la tarea 2.3a
+  eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml
+eval/questions.toml   40 preguntas en español con sus herramientas correctas (meta: unas 100); claves `question` / `tools`
 examples/cheats.toml
 ```
 
-Already-settled details worth not breaking:
-- tldr is downloaded from `https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip` (all languages). `page_path` accepts folder prefixes.
-- Translations are joined by normalized command: `desc` comes from the first language in `languages`; the other descriptions plus the page summary go to `alt`, which is used only for searching.
-- `placeholders::fill` leaves `{{x}}` untouched when the value is `None` or empty.
-- History ignores noise (`ls`, `cd`, `clear`…) and keeps the most recent `history_limit` entries.
-- `search` exit codes: 0 = chosen, 130 = cancelled, 2 = error.
+Detalles ya resueltos que conviene no romper:
+- tldr se descarga de `https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip` (todos los idiomas). `page_path` acepta prefijos de carpeta.
+- Las traducciones se unen por comando normalizado: `desc` sale del primer idioma de `languages` y las demás descripciones más el resumen de la página van a `alt`, que se usa solo para buscar.
+- `placeholders::fill` deja `{{x}}` intacto cuando el valor es `None` o vacío.
+- El historial ignora ruido (`ls`, `cd`, `clear`…) y se queda con los `history_limit` más recientes.
+- Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
-## Experience design
+## Diseño de la experiencia
 
-Three simulated GIFs (not real captures, drawn with Spanish strings) define the desired interface; the English strings used in the docs are their translations. If they are in `docs/`, use them as reference:
-1. **Searcher** (`Ctrl-G`): list with `tldr` / `mine` / `hist` labels, description and origin below, placeholder fill-in, tmux popup.
-2. **Question mode** (`Ctrl-Space`): the prompt changes to ` ✦ ask `, you type in natural language, Enter → `resolving…` spinner → the command is left on the normal prompt. If the tool is missing: a yellow box with OS, package manager and `sudo apt install -y X`, with options `[y]` install (`[s]` in the Spanish UI), `[a]` alternative without installing and `[esc]` cancel. While installing, apt's output and the sudo password prompt show in the terminal and the command is completed at the end.
-3. **Hard cases:** a `⚡ local · tldr/zip · 41 ms` line below the prompt (a `zle -M`-style message); `✦ llm · haiku · 1.1 s · saved to cache`; a destructive command with a red box (effect, device data from `lsblk`, signals), left on the prompt highlighted in red with `⚠ destructive` on the right; devices chosen only among removable ones from `lsblk`.
+Hay GIFs simulados (no capturas reales, dibujados con textos en español) que definen la interfaz deseada; la herramienta real mostrará esos textos en inglés por defecto (y en español con `language = "es"`). Están en `docs/`:
+1. **Modo pregunta y alternativas** (`docs/pistasho-modo-pregunta.gif`, [ADR 0001](docs/adr/0001-question-mode-single-entry.md)), cuatro pasos:
+   1. `Ctrl-Space`: el prompt cambia a ` ✦ pregunta ` (pista `⏎ preguntar · tab explorar · esc salir`), escribes, Enter → spinner `resolviendo…` → el mejor comando queda en el prompt normal, con `⚡ local · tldr/fc · Ctrl-Space: ver 5 más` debajo.
+   2. ¿No era ese? `Ctrl-Space` otra vez (con el `BUFFER` sin editar) abre, compacta debajo del prompt, `otras opciones · «<pregunta>»`: un campo de filtro `❯` y filas `tldr` / `mío` / `hist` + comando con marcadores resaltados. `↑↓` mover, `Enter` reemplaza, `Esc` deja el actual.
+   3. Escribes para filtrar, eliges y Enter reemplaza el comando (`✓ reemplazado · mío/cheats.toml`). Si editas el `BUFFER` o ejecutas el comando, el siguiente `Ctrl-Space` es una pregunta nueva.
+   4. `Ctrl-Space` + `Tab` con el campo vacío: `explorar · tus atajos, historial y tldr` (el antiguo buscador: mío → historial reciente → tldr, filtro difuso, `Tab` inserta la plantilla sin rellenar).
+2. **Instalar y alternativa** (`docs/pistasho-casos.gif`, caso 4 y la caja de instalación): si falta la herramienta, caja amarilla con OS, gestor y `sudo apt install -y X`, con las opciones `[s]` instalar, `[a]` alternativa sin instalar y `[esc]` cancelar. Al instalar, la salida de apt y la contraseña de sudo se ven en la terminal y al final se completa el comando.
+3. **Casos difíciles** (`docs/pistasho-casos.gif`): línea `⚡ local · tldr/zip · 41 ms` debajo del prompt (mensaje tipo `zle -M`); `✦ llm · haiku · 1.1 s · guardado en caché`; comando destructivo con caja roja (efecto, datos del dispositivo desde `lsblk`, señales; opciones `[⏎]` dejar en el prompt, `[e]` editar, `[esc]` cancelar), que queda en el prompt resaltado en rojo con `⚠ destructivo` a la derecha; dispositivos elegidos solo entre los extraíbles de `lsblk`. Los puntajes `laya …` de ese GIF son de la fase 3; antes de eso la línea lleva el puntaje de BM25 / híbrido.
 
-The searcher is **compact below the prompt** in the zsh widget (like `fzf --height 40%`, task 5.1 done early) via ratatui's `Viewport::Inline`; `ui.height` / `--height` take `40%`, a line count or `full`. The tmux popup always uses its full area. Gotcha: inside the widget stdout is the `$(...)` pipe, and ratatui/crossterm query the cursor position through stdout, so `tui::run` points stdout at the tty while it runs (restored by `Guard` before the command is printed).
+La lista de candidatos va **en línea debajo del prompt** (tipo `fzf --height 40%`) con `Viewport::Inline` de ratatui, ya implementado antes de tiempo como tarea 5.1 y reutilizado por la tarea 2.3b; `ui.height` / `--height` aceptan `40%`, un número de líneas o `full`. El popup de tmux siempre usa su área completa. Ojo: dentro del widget stdout es el pipe de `$(...)` y ratatui/crossterm consultan la posición del cursor por stdout, así que `tui::run` apunta stdout al tty mientras corre (lo restaura `Guard` antes de imprimir el comando).
 
-## Roadmap
+## Hoja de ruta
 
-Task-level detail is in `PLAN.md`. Summary:
+El detalle por tareas está en `PLAN.md`. Resumen:
 
-### Phase 2: question mode without AI (next)
-- `Ctrl-Space` widget (configurable: `keys.ask`). Switches the prompt to question mode; Enter calls `pistasho ask "<question>"`, the result goes to `BUFFER` and the normal prompt returns.
-- **SQLite + FTS5 index** (rusqlite `bundled`) for BM25 over `desc` + `alt` + tags. Also stores the question → command cache and usage stats.
-- **Multilingual embeddings** (`multilingual-e5-small` family, ~120 MB quantized, ONNX via `ort` or `fastembed`). Vectors precomputed in `update`; only the question's vector is computed at ask time. Hybrid BM25 + embeddings search with rank fusion (RRF). Handles synonyms and a Spanish question against an English description.
-- **Binary verification:** `command -v` / search in `PATH`.
-- **OS detection** via `/etc/os-release` (`ID`, `ID_LIKE`) → package manager.
-- **Command ≠ package:** curated table (`rg`→`ripgrep`; `fd`→`fd-find` on Debian/Ubuntu, where the binary becomes `fdfind`; `bat`→`batcat` on Debian, etc.) and **verification with the package manager** before proposing (`apt-cache policy`, `pacman -Si`, `dnf info`).
-- **Install:** confirmation box; runs in the foreground with stdin/stdout on the tty so sudo can ask for the password. When done, verify the binary again and complete the command.
-- **Option `[a]`:** alternative using already-installed binaries (e.g. `tree` → `find src -maxdepth 2 | sort`). In this phase it comes from a curated table.
-- **Fixed risk rules:** `rm -rf`, `dd of=/dev/`, `mkfs`, `chmod -R`/`chown -R` on `/`, `> /dev/sd*`, fork bombs, `:(){`. Red warning and never a silent auto-fill.
-- Measure with `pistasho eval` against the phase 1 baseline and record the numbers in `docs/eval.md`.
+### Fase 2: modo pregunta sin IA (siguiente)
+- Widget `Ctrl-Space` (configurable: `keys.ask`), la única entrada. Cambia el prompt a modo pregunta (por ejemplo `zle recursive-edit` con un PS1 temporal, o leer la pregunta en el binario sobre `/dev/tty`). Enter llama a `pistasho ask "<pregunta>"`, el mejor comando va a `BUFFER` y vuelve el prompt normal. Un segundo `Ctrl-Space` sobre el resultado sin editar abre la lista de alternativas de la misma pregunta (`ask --alternatives`); `Tab` con la pregunta vacía abre la lista de explorar (`ask --explore`). `ask` devuelve los N mejores candidatos con su origen.
+- **Índice en SQLite + FTS5** (rusqlite con `bundled`) para BM25 sobre `desc` + `alt` + etiquetas. También guarda la caché pregunta → comando y las estadísticas de uso.
+- **Embeddings multilingües** (familia `multilingual-e5-small`, ~120 MB cuantizado, ONNX vía `ort` o `fastembed`). Vectores precalculados en `update`; al preguntar solo se calcula el de la pregunta. Búsqueda híbrida BM25 + embeddings con fusión por rangos (RRF). Resuelve sinónimos y pregunta en español contra descripción en inglés.
+- **Verificación de binarios:** `command -v` / buscar en `PATH`.
+- **Detección de OS** con `/etc/os-release` (`ID`, `ID_LIKE`) → gestor de paquetes.
+- **Comando ≠ paquete:** tabla curada (`rg`→`ripgrep`; `fd`→`fd-find` en Debian/Ubuntu, donde el binario queda como `fdfind`; `bat`→`batcat` en Debian, etc.) y **verificación con el gestor** antes de proponer (`apt-cache policy`, `pacman -Si`, `dnf info`).
+- **Instalación:** caja de confirmación; se ejecuta en primer plano con stdin/stdout en la tty para que sudo pida la contraseña. Al terminar, verificar el binario otra vez y completar el comando.
+- **Opción `[a]`:** alternativa con binarios ya instalados (por ejemplo `tree` → `find src -maxdepth 2 | sort`). En esta fase sale de una tabla curada.
+- **Reglas fijas de riesgo:** `rm -rf`, `dd of=/dev/`, `mkfs`, `chmod -R`/`chown -R` sobre `/`, `> /dev/sd*`, fork bombs, `:(){`. Aviso rojo y nunca auto-relleno silencioso.
+- Medir con `pistasho eval` contra la línea base de la fase 1 y guardar los números en el README o en un `docs/eval.md`.
 
-### Phase 3: decision model (optional, only if `eval` justifies it)
-- `Decide` interface with three implementations: local Laya (ONNX), laya-serve (Jev-compatible HTTP) and Jev (TypeSafe API).
-- Uses: **choice** among the ~10 best candidates + "none" (decides whether the LLM is needed), **noul** "is it destructive?" and **noul** "does the alternative satisfy the request?".
-- Researched data (November 2026): Jev is **non-generative** (choice / score / noul with probabilities), hosted, at $0.042 per million input tokens. Laya is open (Apache 2.0); the multilingual checkpoint is mmBERT-base at 322M parameters, and the English one is ModernBERT-large at 421M. **The "33 ms" figure is on a T4 GPU; on CPU the large model takes about 370–380 ms** (the multilingual one ~2× faster), with 0.5 GB of RAM in int8 and 1.7 GB in fp32. **Without fine-tuning its accuracy is low** (0.36 in an independent test) and it comes uncalibrated. It is a base to specialize, not something ready to use.
-- That is why it needs a **daemon** (`pistasho daemon`, unix socket in `$XDG_RUNTIME_DIR`) that keeps the model in memory, plus **fine-tuning + calibration** with our extended test set.
-- Criteria to drop it: if hybrid search already hits top-1 in 85–90% of cases, if tuned Laya does not improve by 5–10 points, or if it takes more than ~300 ms on the user's machine.
-- The user has a Proxmox server (Intel CPU) where laya-serve could run.
+### Fase 3: modelo de decisión (opcional, solo si `eval` lo justifica)
+- Interfaz `Decide` con tres implementaciones: Laya local (ONNX), laya-serve (HTTP compatible con Jev) y Jev (API de TypeSafe).
+- Usos: **choice** entre los ~10 mejores candidatos + "ninguno" (decide si hace falta el LLM), **noul** "¿es destructivo?" y **noul** "¿la alternativa cumple la petición?".
+- Datos investigados (noviembre de 2026): Jev es **no generativo** (choice / score / noul con probabilidades), alojado, a $0.042 por millón de tokens de entrada. Laya es abierto (Apache 2.0), el checkpoint multilingüe es mmBERT-base de 322M parámetros, y el inglés es ModernBERT-large de 421M. **Los "33 ms" son en GPU T4; en CPU son unos 370–380 ms el modelo grande** (el multilingüe ~2× más rápido), con 0.5 GB de RAM en int8 y 1.7 GB en fp32. **Sin fine-tuning su precisión es baja** (0.36 en una prueba independiente) y viene sin calibrar. Es una base para especializar, no algo listo para usar.
+- Por eso necesita un **daemon** (`pistasho daemon`, socket unix en `$XDG_RUNTIME_DIR`) que mantenga el modelo en memoria, y **fine-tuning + calibración** con nuestro conjunto de prueba ampliado.
+- Criterio para descartarlo: si la búsqueda híbrida ya acierta el top-1 en un 85–90% de los casos, si Laya ajustado no mejora 5–10 puntos, o si tarda más de ~300 ms en la máquina del usuario.
+- El usuario tiene un servidor Proxmox (CPU Intel) donde podría correr laya-serve.
 
-### Phase 4: LLM fallback
-- `Generate` interface: Anthropic (default `claude-haiku-5-5`, key from the `llm.api_key_env` variable) and Ollama (`llm.endpoint`, `llm.model`).
-- Structured JSON response: `{command, binaries[], package?, risk, explanation}`. Always validate with the phase 2 binary and risk steps.
-- SQLite cache; the second time the same question is asked it goes through the local path (`⚡`).
-- Only the question + OS + shell are sent.
+### Fase 4: LLM de respaldo
+- Interfaz `Generate`: Anthropic (por defecto `claude-haiku-5-5`, key desde la variable de `llm.api_key_env`) y Ollama (`llm.endpoint`, `llm.model`).
+- Respuesta en JSON estructurado: `{command, binaries[], package?, risk, explanation}`. Validar siempre con el paso de binarios y riesgo de la fase 2.
+- Caché en SQLite; la segunda vez que se hace la misma pregunta va por la vía local (`⚡`).
+- Solo se envían pregunta + OS + shell.
 
-### Phase 5: polish
-- Packaging (cargo-dist, AUR), real GIFs recorded with `vhs`, documentation.
+### Fase 5: pulido
+- Empaquetado (cargo-dist, AUR), GIFs reales grabados con `vhs`, documentación.
 
-## Configuration (`~/.config/pistasho/config.toml`)
+## Configuración (`~/.config/pistasho/config.toml`)
 
 ```toml
-language = "en"                 # UI language: en | es
-languages = ["en", "es"]        # tldr languages; the first provides the displayed description
+language = "en"                 # idioma de la interfaz: en | es | auto (detecta el del sistema)
+languages = ["en", "es"]        # idiomas de tldr; el primero da la descripción que se muestra
 platforms = ["common", "linux"]
 history = true
 history_limit = 5000
 tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip"
 
 [ui]
-height = "40%"                # zsh searcher height: 40% | 15 | full
+height = "40%"                # alto del buscador en zsh: 40% | 15 | full
 
 [keys]
-search = "^G"   # zsh bindkey
-ask = "^ "      # Ctrl-Space, phase 2
+search = "^G"   # obsoleto (ADR 0001): solo se enlaza hasta que la tarea 2.3a quite el widget de Ctrl-G; luego se ignora
+ask = "^ "      # Ctrl-Space: la única entrada (fase 2)
 tmux = "g"      # prefix + g
 
-[decide]        # phase 3: none | laya | laya-serve | jev
+[decide]        # fase 3: none | laya | laya-serve | jev
 provider = "none"
 
-[llm]           # phase 4: none | anthropic | ollama
+[llm]           # fase 4: none | anthropic | ollama
 provider = "none"
 ```
 
-The user asked for everything to be configurable **from the first run**, through the wizard (`pistasho config`) or by editing the file. When adding new options, add them to the wizard too.
+El usuario pidió que todo sea configurable **desde la primera ejecución**, con el asistente (`pistasho config`) o editando el archivo. Al agregar opciones nuevas, súmalas también al asistente.
 
-## Useful commands
+## Comandos útiles
 
 ```sh
 cargo build && cargo clippy --all-targets && cargo test
-cargo run -- query comprimir carpeta        # search without the interface
-cargo run -- eval                           # accuracy over eval/questions.toml
-cargo run -- init zsh                       # inspect the generated widget
+cargo run -- query comprimir carpeta        # búsqueda sin interfaz
+cargo run -- eval                           # precisión sobre eval/questions.toml
+cargo run -- init zsh                       # revisar el widget generado
 ```

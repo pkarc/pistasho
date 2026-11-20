@@ -60,7 +60,7 @@ En zsh el buscador abre compacto debajo del prompt (40% de la pantalla por defec
 
 ## Idioma
 
-La interfaz va en inglés por defecto. Para español, pon `language = "es"` en `config.toml` (o elígelo en `pistasho config`) o exporta `PISTASHO_LANG=es`. El texto de `--help` solo está en inglés.
+La interfaz va en inglés por defecto. Pon `language = "es"` en `config.toml` (o elígelo en `pistasho config`) para español, o `language = "auto"` para seguir el idioma del sistema (`LC_ALL`, `LC_MESSAGES`, `LANG`). `PISTASHO_LANG=en|es|auto` tiene prioridad sobre la configuración. El texto de `--help` solo está en inglés.
 
 ## Archivos
 
@@ -81,7 +81,7 @@ El historial se lee de `history_file` en la configuración, `$HISTFILE` o `~/.zs
 - [ ] **Fase 4** · LLM de respaldo (Anthropic / Ollama) con caché; solo envía pregunta + OS + shell
 - [ ] **Fase 5** · empaquetado (AUR), demos grabadas con `vhs`
 
-La lista detallada de tareas está en [PLAN.es.md](PLAN.es.md).
+La lista detallada de tareas está en [PLAN.md](PLAN.md) (en español, igual que las decisiones de diseño en `docs/adr/`).
 
 ## Licencia
 

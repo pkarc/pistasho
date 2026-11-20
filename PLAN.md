@@ -1,211 +1,230 @@
-# pistasho: implementation plan
+# pistasho: plan de implementación
 
-[English](PLAN.md) · [Español](PLAN.es.md)
+Cada tarea está pensada para una sesión de Claude Code: un objetivo, qué tocar y cómo saber que está lista. Hazlas en orden dentro de cada fase, salvo que se indique lo contrario. Marca `[x]` al terminar y anota en **Notas** lo que cambió respecto al plan.
 
-Each task is meant to fit one Claude Code session: one goal, what to touch and how to know it is done. Do them in order within each phase unless stated otherwise. Mark `[x]` when finished and note in **Notes** whatever changed from the plan.
+Tamaños: **S** = menos de una sesión, **M** = una sesión, **L** = dos o más sesiones (conviene partirla).
 
-Sizes: **S** = less than one session, **M** = one session, **L** = two or more sessions (worth splitting).
-
-Rules for every task:
-- `cargo fmt --check`, `cargo clippy --all-targets` with no new warnings, and `cargo test` pass.
-- All new pure logic comes with unit tests.
-- Nothing runs the suggested command (see the principles in `CLAUDE.md`).
-- Docs are English by default; every doc change is mirrored in its `*.es.md` twin in the same commit.
+Reglas para todas las tareas:
+- `cargo fmt --check`, `cargo clippy --all-targets` sin warnings nuevos y `cargo test` pasan.
+- Toda lógica pura nueva lleva pruebas unitarias.
+- Nada ejecuta el comando sugerido (ver principios en `CLAUDE.md`).
+- Idioma: código y comentarios en inglés; toda cadena visible de la herramienta lleva inglés y español (`tr("English", "Español")`); el README se actualiza en sus dos versiones. Este plan, las decisiones y `CLAUDE.md` van solo en español.
 
 ---
 
-## Phase 1 · Searcher wrap-up
+## Fase 1 · Cierre del buscador
 
-### [x] 1.1 Build and fix · S
-The code was never compiled with its dependencies.
-- `cargo build`, fix API errors (ratatui 0.29, nucleo-matcher 0.3, ureq 2, zip 2, clap 4).
-- If a pinned version causes trouble, upgrade it and note it.
+### [x] 1.1 Compilar y corregir · S
+El código nunca se compiló con sus dependencias.
+- `cargo build`, corregir errores de API (ratatui 0.29, nucleo-matcher 0.3, ureq 2, zip 2, clap 4).
+- Si una versión fijada da problemas, actualizarla y anotarlo.
 
-**Done when:** it compiles, clippy and tests pass, and CI is green on GitHub.
+**Lista cuando:** compila, clippy y tests pasan, y CI queda en verde en GitHub.
 
-### [ ] 1.2 End-to-end test · S
-- `pistasho config` → `pistasho update` → `pistasho query tar` returns tar examples in Spanish.
-- zsh widget: `Ctrl-G` with existing text, pick, fill placeholders, the command stays on the prompt with the cursor at the end.
-- tmux popup: the command reaches the right pane without Enter, also inside an ssh session.
-- Cancelling with Esc leaves the prompt as it was.
+### [ ] 1.2 Prueba de punta a punta · S
+- `pistasho config` → `pistasho update` → `pistasho query tar` devuelve ejemplos de tar en español.
+- Buscador: `pistasho search` directo (elegir, rellenar marcadores, el comando queda en el prompt y el cursor al final) y con el popup de tmux. **No** pulir el widget de `Ctrl-G`: se va a quitar (ADR 0001).
+- Popup de tmux: el comando llega al panel correcto sin Enter, también dentro de una sesión ssh.
+- Cancelar con Esc deja el prompt como estaba.
 
-**Done when:** all of the above works on the user's machine and the problems found are fixed.
+**Lista cuando:** todo lo anterior funciona en la máquina del usuario y los problemas encontrados están corregidos.
 
-### [ ] 1.3 Baseline performance · S
-- Measure the time from `Ctrl-G` to seeing results (loading `index.json` + history) and the time per keystroke with ~30k entries.
-- If loading goes over ~150 ms: switch the index to a binary format (bincode / postcard) or pull forward the SQLite part of task 2.1.
+### [ ] 1.3 Rendimiento base · S
+- Medir el tiempo desde `Ctrl-G` hasta ver resultados (cargar `index.json` + historial) y el tiempo por tecla con ~30k entradas.
+- Si la carga pasa de ~150 ms: cambiar el índice a un formato binario (bincode / postcard) o adelantar la parte de SQLite de la tarea 2.1.
 
-**Done when:** the numbers are recorded in `docs/eval.md`, opening takes under ~150 ms and each keystroke under ~30 ms.
+**Lista cuando:** hay números anotados en `docs/eval.md`, la apertura queda en menos de ~150 ms y cada tecla en menos de ~30 ms.
 
-### [ ] 1.4 `eval` baseline · S
-- Run `pistasho eval` and save top-1 / top-3 in `docs/eval.md`.
-- Grow `eval/questions.toml` toward ~100 questions with commands the user really uses (can be an ongoing task).
+### [ ] 1.4 Línea base de `eval` · S
+- Correr `pistasho eval` y guardar top-1 / top-3 en `docs/eval.md`.
+- Ampliar `eval/questions.toml` hacia ~100 preguntas con comandos que el usuario realmente usa (puede ser una tarea continua).
 
-**Done when:** `docs/eval.md` has the phase 1 baseline with a date.
-
----
-
-## Phase 2 · Question mode without AI
-
-### [ ] 2.1 SQLite + FTS5 index · M
-- Add `rusqlite` with `bundled`. Database at `~/.local/share/pistasho/pistasho.db`.
-- Tables: `entries` (cmd, desc, alt, tool, source, origin, count), virtual table `entries_fts` (FTS5 over desc, alt, tool, tags) and `meta` (schema version and languages).
-- `update` writes to SQLite. Cheats and history are synced on open (by comparing file modification times).
-- The phase 1 fuzzy searcher stays the same, but reads from SQLite.
-- Normalize accents in FTS5 (`tokenize = "unicode61 remove_diacritics 2"`).
-
-**Done when:** `index.json` is gone, the searcher works the same or faster, and a test confirms that "compresión" finds "comprimir" or "compression" via `alt`.
-
-### [ ] 2.2 `pistasho ask` with BM25 · M
-- `ask "<question>"` subcommand that returns the best candidate by BM25 (`bm25(entries_fts)`), with `--json` for debugging (candidates and scores).
-- Remove Spanish and English stop words from the question before searching ("qué", "cómo", "de", "the"…).
-- Raise the weight of `mine` entries and of frequently used history entries.
-- `eval` accepts `--mode fuzzy|bm25` to compare.
-
-**Done when:** `pistasho eval --mode bm25` clearly beats the 1.4 baseline and the result is recorded in `docs/eval.md`.
-
-### [ ] 2.3 Question-mode widget (`Ctrl-Space`) · M
-- `init zsh` adds the `_pistasho_ask` widget on `keys.ask`.
-- GIF 2 experience: the prompt changes to ` ✦ ask ` with a hint on the right (`⏎ ask · esc exit`). Enter resolves and leaves the command on the normal prompt; Esc returns to the original prompt unchanged.
-- Recommended option: the binary reads the question on `/dev/tty` inline (no alternate screen), shows the spinner and returns the command on stdout. Alternative: `zle recursive-edit` with a temporary `PS1`.
-- Below the prompt, a `zle -M` message: `⚡ local · tldr/zip · 12 ms`.
-- If the command has placeholders, they are asked for just like in the searcher.
-
-**Done when:** the GIF 2 flow (`grep root` case) works in zsh, with and without text already on the prompt.
-
-### [ ] 2.4 Binary verification · S
-- `system::which(bin)` module that searches `PATH` without spawning processes.
-- Extract the binaries of a command: first word, words after `|`, `&&`, `;`, `$(`, `xargs`, skipping `sudo` / `env` / `VAR=x` assignments.
-- `ask` marks each candidate as available or missing.
-
-**Done when:** there are tests for `sudo tar …`, `ss -tlnp | grep :80`, `find . | xargs rg x` and `FOO=1 make`.
-
-### [ ] 2.5 OS and package detection · M
-- Read `/etc/os-release` (`ID`, `ID_LIKE`, `PRETTY_NAME`) → manager: apt, pacman, dnf or zypper.
-- Curated table `data/packages.toml` of command → package per family, including the odd cases: `rg`→`ripgrep`; `fd`→`fd-find` on Debian, where the binary is `fdfind`; `bat`→`bat`, with binary `batcat` on Debian; `ncdu`, `tree`, `jq`, `htop`, `btop`, `delta`→`git-delta`…
-- Verify the package exists before proposing it: `apt-cache policy X`, `pacman -Si X`, `dnf info X`, `zypper info X`.
-- If the installed binary has a different name (`fdfind`), rewrite the command or warn.
-
-**Done when:** tested on Ubuntu and Arch (containers are fine), with tests for the table and the os-release parser.
-
-### [ ] 2.6 Install flow · M
-- GIF 2 confirmation box: command, system, `Install: sudo apt install -y X`, options `[y]` install, `[a]` alternative, `[esc]` cancel. (In the Spanish UI the install key is `[s]`.)
-- On confirm: run the install in the foreground inheriting the tty (sudo asks for the password and apt's output is visible). When done, verify the binary again, show `✓ X installed` and complete the command.
-- On failure: show the error and leave the prompt untouched.
-- Never install without confirmation, nor with `--yes` in a default configuration.
-
-**Done when:** the GIF 2 `ncdu` case works end to end on a machine where ncdu is missing.
-
-### [ ] 2.7 Alternatives without installing · S
-- Curated table of alternatives using base tools: `tree`→`find {{dir}} -maxdepth 2 | sort`, `ncdu`→`du -h -d1 {{dir}} | sort -h`, `rg`→`grep -rn`, `fd`→`find -name`, `jq .`→`python3 -m json.tool`, `htop`→`top`…
-- The `[a]` option uses the table and verifies that the alternative's binaries exist.
-
-**Done when:** the GIF 3 `tree` case works.
-
-### [ ] 2.8 Risk rules · M
-- `risk` module with patterns: `rm -rf` (especially on `/`, `~` or `*`), `dd … of=/dev/…`, `mkfs*`, `wipefs`, `shred`, `chmod/chown -R` on `/`, `> /dev/sd*`, fork bomb, `:(){`, `git push --force` to main, `DROP TABLE`…
-- Levels: `ok`, `caution`, `destructive`.
-- If a placeholder is a device (`{{dispositivo}}`, `/dev/sdX`): offer only the removable devices from `lsblk -J -o NAME,MODEL,SIZE,FSTYPE,MOUNTPOINT,RM`.
-- On `destructive`, the GIF 3 red box. The command stays on the prompt with `⚠ destructive` in `RPROMPT` and highlighted (`region_highlight`).
-- Applies to every command coming out of `ask`, and to the searcher too.
-
-**Done when:** there are tests per pattern, including obvious false positives (`rm -rf ./build` is `caution`, not `destructive`), and the GIF 3 USB case works.
-
-### [ ] 2.9 Multilingual embeddings · L (split into 2.9a / 2.9b)
-- **2.9a:** choose the model (`multilingual-e5-small` family, quantized) and the execution route (`fastembed` or `ort` directly). Measure RAM, size and per-question latency on the user's machine. Download it in `update`; do not bundle it in the binary.
-- **2.9b:** precompute the vectors of all entries in `update` and store them in SQLite as a blob. When asking, compute the question's vector, cosine similarity (brute force over ~30k vectors is enough), and fuse with BM25 by ranks (RRF, k=60).
-- `search.embeddings = true|false` option in the configuration and in the wizard.
-
-**Done when:** `eval --mode hybrid` beats `bm25`, `ask` latency stays under ~150 ms, and it is recorded in `docs/eval.md`. If it does not improve, leave it off by default and note why.
-
-### [ ] 2.10 Phase 2 wrap-up · S
-- Final phase `eval`, updated README and a real `vhs` GIF of question mode.
+**Lista cuando:** `docs/eval.md` tiene la línea base de la fase 1 con fecha.
 
 ---
 
-## Phase 3 · Decision model (optional)
+## Fase 2 · Modo pregunta sin IA
 
-> Only start if, in `docs/eval.md`, hybrid top-1 is below ~85% or if deciding "none fits" with BM25 thresholds proves unreliable.
+### [ ] 2.1 Índice en SQLite + FTS5 · M
+- Agregar `rusqlite` con `bundled`. Base en `~/.local/share/pistasho/pistasho.db`.
+- Tablas: `entries` (cmd, desc, alt, tool, source, origin, count), tabla virtual `entries_fts` (FTS5 sobre desc, alt, tool, tags) y `meta` (versión del esquema e idiomas).
+- `update` escribe en SQLite. Cheats e historial se sincronizan al abrir (comparando la fecha de modificación de los archivos).
+- El buscador difuso de la fase 1 sigue igual, pero leyendo de SQLite.
+- Normalizar acentos en FTS5 (`tokenize = "unicode61 remove_diacritics 2"`).
 
-### [ ] 3.1 `Decide` interface + Jev / laya-serve over HTTP · M
-- `Decide` trait with `choice(state, options) -> (index, prob)` and `noul(state, question) -> prob`.
-- HTTP client for the Jev-compatible API, which serves both Jev and laya-serve; `decide.endpoint`, `decide.api_key_env`.
-- `ask` uses choice among the 10 best candidates + "none".
+**Lista cuando:** `index.json` desaparece, el buscador funciona igual o más rápido, y una prueba confirma que "compresión" encuentra "comprimir" o "compression" vía `alt`.
+
+### [ ] 2.2 `pistasho ask` con BM25 · M
+- Subcomando `ask "<pregunta>"` que devuelve el mejor candidato por BM25 (`bm25(entries_fts)`), con `--json` para depurar (candidatos y puntuaciones).
+- `ask` debe poder devolver también los N mejores candidatos con su origen (los necesita la lista de alternativas), no solo el mejor.
+- Quitar palabras vacías en español e inglés de la pregunta antes de buscar ("qué", "cómo", "de", "the"…).
+- Subir el peso de las entradas `mío` y de las del historial que se usan seguido.
+- `eval` acepta `--mode fuzzy|bm25` para comparar.
+
+**Lista cuando:** `pistasho eval --mode bm25` supera claramente a la línea base de la 1.4 y el resultado está anotado en `docs/eval.md`.
+
+### [ ] 2.3a Respuesta directa · M
+- `init zsh` agrega el widget `_pistasho_ask` en `keys.ask` (`Ctrl-Space`) y **quita** el widget de `Ctrl-G` (y con él `keys.search`).
+- El prompt cambia a ` ✦ pregunta ` con una pista a la derecha (`⏎ preguntar · tab explorar · esc salir`). Enter muestra el spinner `resolviendo…`, resuelve y deja el mejor comando en `BUFFER` con el prompt normal; Esc vuelve al prompt original sin cambios.
+- Opción recomendada: el binario lee la pregunta en `/dev/tty` dentro de la línea (sin pantalla alternativa) y devuelve el comando por stdout. Alternativa: `zle recursive-edit` con un `PS1` temporal.
+- Debajo del prompt, mensaje con `zle -M`: `⚡ local · tldr/fc · Ctrl-Space: ver 5 más`. El comando puede ser multilínea (historial), así que conviene separar los metadatos con NUL (`--format zsh`, `parts=("${(@0)out}")`) o escribirlos en otro descriptor; que lo decida la implementación.
+- Si el comando trae marcadores, se piden igual que en el buscador actual.
+
+**Lista cuando:** el paso 1 del GIF (`docs/pistasho-modo-pregunta.gif`) funciona en zsh, con y sin texto previo en el prompt.
+
+### [ ] 2.3b Alternativas · M
+- Estado del widget en variables de shell `_PISTASHO_LAST_Q` / `_PISTASHO_LAST_CMD`, que se limpian al terminar la línea (`add-zle-hook-widget zle-line-finish`) para que no sobrevivan a un Enter. Al presionar `Ctrl-Space`: si `$BUFFER == $_PISTASHO_LAST_CMD` y no está vacío, se abren las alternativas; si no, pregunta nueva.
+- `ask --alternatives --current "<cmd>" "<pregunta>"` abre la lista e imprime el comando elegido (código 130 si se cancela).
+- Refactor de `tui.rs` de buscador a **lista de candidatos** con dos modos (`Alternatives { question, current }`, `Explore`) más el relleno de marcadores que ya existe, **en línea** debajo del prompt (`Viewport::Inline`, ya hecho en 5.1). Título `otras opciones · «<pregunta>»`, campo de filtro `❯` con filtro difuso en vivo, filas con etiqueta + comando (marcadores resaltados), el comando actual incluido. `↑↓` mover, `Enter` reemplaza (pidiendo marcadores), `Esc` deja el actual. Al reemplazar, debajo del prompt: `✓ reemplazado · <origen>`.
+
+**Lista cuando:** los pasos 2 y 3 del GIF funcionan, y editar el `BUFFER` o ejecutar el comando hace que el siguiente `Ctrl-Space` sea una pregunta nueva.
+
+### [ ] 2.3c Explorar · S
+- `Tab` con el campo vacío en el modo pregunta → `ask --explore`: sin pregunta, ordenada como `empty_query_order` (mío → historial reciente → tldr), con filtro difuso al escribir. `Enter` elige (con relleno de marcadores), `Tab` inserta la plantilla sin rellenar, `Esc` sale.
+
+**Lista cuando:** el paso 4 del GIF funciona.
+
+### [ ] 2.3d Popup de tmux en modo pregunta · S
+- `init tmux` abre el modo pregunta en el popup, con `Tab` para explorar igual que en zsh. Tras resolver muestra el resultado con `⏎ enviar · ↑↓ ver más` (no hay `BUFFER` previo, así que no hay paso de alternativas). El resultado se envía con `tmux send-keys -l`.
+
+**Lista cuando:** el comando llega al panel sin Enter, también dentro de una sesión ssh.
+
+### [ ] 2.4 Verificación de binarios · S
+- Módulo `system::which(bin)` que busca en `PATH`, sin lanzar procesos.
+- Extraer los binarios de un comando: primera palabra, palabras después de `|`, `&&`, `;`, `$(`, `xargs`, y saltar `sudo` / `env` / asignaciones `VAR=x`.
+- `ask` marca cada candidato como disponible o faltante.
+
+**Lista cuando:** hay pruebas para `sudo tar …`, `ss -tlnp | grep :80`, `find . | xargs rg x` y `FOO=1 make`.
+
+### [ ] 2.5 Detección de OS y paquetes · M
+- Leer `/etc/os-release` (`ID`, `ID_LIKE`, `PRETTY_NAME`) → gestor: apt, pacman, dnf o zypper.
+- Tabla curada `data/packages.toml` de comando → paquete por familia, incluidos los casos raros: `rg`→`ripgrep`; `fd`→`fd-find` en Debian, donde el binario es `fdfind`; `bat`→`bat`, con binario `batcat` en Debian; `ncdu`, `tree`, `jq`, `htop`, `btop`, `delta`→`git-delta`…
+- Verificar que el paquete exista antes de proponerlo: `apt-cache policy X`, `pacman -Si X`, `dnf info X`, `zypper info X`.
+- Si el binario instalado tiene otro nombre (`fdfind`), reescribir el comando o avisar.
+
+**Lista cuando:** probado en Ubuntu y Arch (contenedores sirven), con pruebas de la tabla y del parser de os-release.
+
+### [ ] 2.6 Flujo de instalación · M
+- Caja de confirmación del GIF 2: comando, sistema, `Instalar: sudo apt install -y X`, opciones `[s]` instalar, `[a]` alternativa, `[esc]` cancelar.
+- Al confirmar: correr la instalación en primer plano heredando la tty (sudo pide la contraseña y la salida de apt se ve). Al terminar, verificar el binario otra vez, mostrar `✓ X instalado` y completar el comando.
+- Si falla: mostrar el error y no tocar el prompt.
+- Nunca instalar sin confirmación, ni con `--yes` en una configuración por defecto.
+
+**Lista cuando:** el caso `ncdu` del GIF 2 funciona de punta a punta en una máquina donde falta ncdu.
+
+### [ ] 2.7 Alternativas sin instalar · S
+- Tabla curada de alternativas con herramientas base: `tree`→`find {{dir}} -maxdepth 2 | sort`, `ncdu`→`du -h -d1 {{dir}} | sort -h`, `rg`→`grep -rn`, `fd`→`find -name`, `jq .`→`python3 -m json.tool`, `htop`→`top`…
+- La opción `[a]` usa la tabla y verifica que los binarios de la alternativa existan.
+
+**Lista cuando:** el caso `tree` del GIF 3 funciona.
+
+### [ ] 2.8 Reglas de riesgo · M
+- Módulo `risk` con patrones: `rm -rf` (sobre todo `/`, `~` o `*`), `dd … of=/dev/…`, `mkfs*`, `wipefs`, `shred`, `chmod/chown -R` sobre `/`, `> /dev/sd*`, fork bomb, `:(){`, `git push --force` a main, `DROP TABLE`…
+- Niveles: `ok`, `cuidado`, `destructivo`.
+- Si un marcador es un dispositivo (`{{dispositivo}}`, `/dev/sdX`): ofrecer solo los dispositivos extraíbles de `lsblk -J -o NAME,MODEL,SIZE,FSTYPE,MOUNTPOINT,RM`.
+- En `destructivo`, caja roja del GIF 3. El comando queda en el prompt con `⚠ destructivo` en `RPROMPT` y resaltado (`region_highlight`).
+- Se aplica a todo comando que salga de `ask`, y también al buscador.
+
+**Lista cuando:** hay pruebas por patrón, incluidos falsos positivos obvios (`rm -rf ./build` es `cuidado`, no `destructivo`), y el caso de la USB del GIF 3 funciona.
+
+### [ ] 2.9 Embeddings multilingües · L (partir en 2.9a / 2.9b)
+- **2.9a:** elegir el modelo (familia `multilingual-e5-small`, cuantizado) y la vía de ejecución (`fastembed` o `ort` directo). Medir RAM, tamaño y latencia por pregunta en la máquina del usuario. Descargarlo en `update` y no incluirlo en el binario.
+- **2.9b:** precalcular los vectores de todas las entradas en `update` y guardarlos en SQLite como blob. Al preguntar, calcular el vector de la pregunta, similitud coseno (con fuerza bruta sobre unos 30k vectores basta), y fusionar con BM25 por rangos (RRF, k=60).
+- Opción `search.embeddings = true|false` en la configuración y en el asistente.
+
+**Lista cuando:** `eval --mode hybrid` supera a `bm25`, la latencia de `ask` sigue en menos de ~150 ms, y está anotado en `docs/eval.md`. Si no mejora, dejarlo apagado por defecto y anotar por qué.
+
+### [ ] 2.10 Cierre de fase 2 · S
+- `eval` final de la fase, README actualizado y un GIF real con `vhs` del modo pregunta que cubra los 4 pasos del ADR 0001 (respuesta, alternativas, filtrar + reemplazar, explorar).
+
+---
+
+## Fase 3 · Modelo de decisión (opcional)
+
+> Solo se empieza si en `docs/eval.md` el top-1 híbrido está por debajo de ~85% o si decidir "ninguno sirve" con umbrales de BM25 resulta poco confiable.
+
+### [ ] 3.1 Interfaz `Decide` + Jev / laya-serve por HTTP · M
+- Trait `Decide` con `choice(estado, opciones) -> (índice, prob)` y `noul(estado, pregunta) -> prob`.
+- Cliente HTTP para la API compatible con Jev, que sirve para Jev y para laya-serve; `decide.endpoint`, `decide.api_key_env`.
+- `ask` usa choice entre los 10 mejores candidatos + "ninguno".
 - `eval --mode hybrid+decide`.
 
-**Done when:** it works against laya-serve (for example on the user's Proxmox) and is measured in `eval`.
+**Lista cuando:** funciona contra laya-serve (por ejemplo en el Proxmox del usuario) y está medido en `eval`.
 
-### [ ] 3.2 Training data · M
-- Extend the test set with synthetic (question, candidates, correct) triples generated from tldr and reviewed. Split training and test.
+### [ ] 3.2 Datos de entrenamiento · M
+- Ampliar el conjunto de prueba con pares sintéticos (pregunta, candidatos, correcto) generados desde tldr y revisados. Separar entrenamiento y prueba.
 
-### [ ] 3.3 Laya fine-tuning and calibration · L
-- Fine-tune the multilingual checkpoint and calibrate the temperature. Export to ONNX int8.
+### [ ] 3.3 Fine-tuning y calibración de Laya · L
+- Ajustar el checkpoint multilingüe y calibrar la temperatura. Exportar a ONNX int8.
 
-**Done when:** it beats hybrid-without-Laya by 5–10 points on the test set.
+**Lista cuando:** supera al híbrido sin Laya por 5–10 puntos en el conjunto de prueba.
 
-### [ ] 3.4 Local Laya with a daemon · L
-- `pistasho daemon`: unix socket at `$XDG_RUNTIME_DIR/pistasho.sock`, loads the model once, starts itself on the first call and shuts down after a period of inactivity.
-- `ort` in Rust, no Python.
+### [ ] 3.4 Laya local con daemon · L
+- `pistasho daemon`: socket unix en `$XDG_RUNTIME_DIR/pistasho.sock`, carga el modelo una vez, se levanta solo en la primera llamada y se apaga tras un tiempo sin uso.
+- `ort` en Rust, sin Python.
 
-**Done when:** the first cold call takes under 2 s and later ones under ~300 ms on CPU. If that cannot be achieved, only the laya-serve route stays.
+**Lista cuando:** la primera llamada en frío tarda menos de 2 s y las siguientes menos de ~300 ms en CPU. Si no se logra, se queda solo la vía laya-serve.
 
-### [ ] 3.5 Risk and alternatives with noul · S
-- Combine the fixed rules from 2.8 with `noul("is it destructive?")`. The rules always win; the model only adds warnings.
-- `noul("does the alternative satisfy the request?")` for the `[a]` option.
+### [ ] 3.5 Riesgo y alternativas con noul · S
+- Combinar las reglas fijas de 2.8 con `noul("¿es destructivo?")`. Las reglas siempre ganan; el modelo solo agrega avisos.
+- `noul("¿la alternativa cumple la petición?")` para la opción `[a]`.
 
-### [ ] 3.6 Decision · S
-- With the numbers in hand, decide whether Laya is enabled by default, optional, or dropped. Record it in `docs/eval.md`.
+### [ ] 3.6 Decisión · S
+- Con los números en mano, decidir si Laya queda activado por defecto, opcional o se descarta. Anotarlo en `docs/eval.md`.
 
 ---
 
-## Phase 4 · LLM fallback
+## Fase 4 · LLM de respaldo
 
-### [ ] 4.1 `Generate` interface + Anthropic · M
-- Call with structured output: `{command, binaries[], package?, risk, explanation}`.
-- System prompt with the OS, the package manager, the shell and "one-line command, run nothing". **Never** include history, paths or files.
-- Key from the `llm.api_key_env` variable; short timeout and a clear message on failure.
+### [ ] 4.1 Interfaz `Generate` + Anthropic · M
+- Llamada con salida estructurada: `{command, binaries[], package?, risk, explanation}`.
+- Prompt de sistema con el OS, el gestor de paquetes, el shell y "comando de una línea, sin ejecutar nada". **Nunca** incluir historial, rutas ni archivos.
+- Key desde la variable de `llm.api_key_env`; timeout corto y mensaje claro si falla.
 
-**Done when:** the GIF 3 `.jpeg → .jpg` case works.
+**Lista cuando:** el caso `.jpeg → .jpg` del GIF 3 funciona.
 
 ### [ ] 4.2 Ollama · S
-- Same interface against `llm.endpoint` / `llm.model`, with JSON format.
+- Misma interfaz contra `llm.endpoint` / `llm.model`, con formato JSON.
 
-### [ ] 4.3 When to call the LLM · S
-- Call it only if the local route found nothing reliable: BM25 / hybrid under a threshold, or "none" from the decision model.
-- Show `✦ llm · model · 1.1 s` below the prompt.
+### [ ] 4.3 Cuándo llamar al LLM · S
+- Llamarlo solo si la vía local no encontró nada confiable: BM25 / híbrido bajo un umbral, o "ninguno" del modelo de decisión.
+- Mostrar `✦ llm · modelo · 1.1 s` debajo del prompt.
 
-### [ ] 4.4 Validation and cache · S
-- Every LLM command goes through 2.4 (binaries), 2.5/2.6 (install) and 2.8 (risk) before reaching the prompt.
-- Cache normalized question → command in SQLite. A repeated question resolves as `⚡ local · cache`.
-- Option to save an LLM command that worked for you into `cheats.toml`.
+### [ ] 4.4 Validación y caché · S
+- Todo comando del LLM pasa por 2.4 (binarios), 2.5/2.6 (instalación) y 2.8 (riesgo) antes de llegar al prompt.
+- Caché pregunta normalizada → comando en SQLite. Al repetir la pregunta se resuelve como `⚡ local · caché`.
+- Opción para guardar en `cheats.toml` un comando del LLM que te sirvió.
 
-**Done when:** the second time the same question is asked, the LLM is not called.
-
----
-
-## Phase 5 · Polish and launch
-
-### [x] 5.1 Compact searcher · M
-- ratatui `Viewport::Inline` below the prompt, like `fzf --height 40%`. `ui.height` option, with full screen as the alternative.
-
-**Done when:** in zsh the searcher opens below the prompt, and picking or cancelling leaves the prompt and cursor intact, also when the prompt is on the last row. (Done early, before phase 2.)
-
-### [ ] 5.2 Packaging · M
-- cargo-dist for GitHub releases (Linux x86_64 / aarch64 binaries), AUR package and `cargo install pistasho` (publish the crate).
-
-### [ ] 5.3 Real demos · S
-- Replace the simulated GIFs with `vhs` recordings (`.tape` files in `docs/`).
-
-### [ ] 5.4 Documentation and launch · S
-- Complete README, a privacy section, how to contribute cheats and questions to `eval`, and a CHANGELOG.
+**Lista cuando:** la segunda vez que se hace la misma pregunta no se llama al LLM.
 
 ---
 
-## Notes
+## Fase 5 · Pulido y lanzamiento
 
-<!-- Record decisions or plan changes here, with a date. -->
+### [x] 5.1 Buscador compacto · M (absorbida por 2.3b)
+- Absorbida por 2.3b (ADR 0001): la lista en línea es el mismo componente. El viewport en línea se implementó aquí, antes de tiempo, y 2.3b lo reutiliza.
+- `Viewport::Inline` de ratatui debajo del prompt, como `fzf --height 40%`. Opción `ui.height` y la pantalla completa como alternativa.
 
-- 2026-11-19 · 1.1: it compiled on the first try with the pinned versions, with no API errors or version changes. Only adjustment: the `unnecessary_sort_by` clippy warning in `history.rs`. `Cargo.lock` is now versioned (it is a binary). CI green. `cargo install` puts the binary in `~/.cargo/bin`, which was not in `PATH`.
-- 2026-11-19 · Language: the project is now English by default (README, CLAUDE.md, PLAN.md). The Spanish versions are kept as `README.es.md`, `CLAUDE.es.md` and `PLAN.es.md` and must stay aligned. UI strings and code comments were migrated to English in the same change. The Spanish UI stays available through `language = "es"` / `PISTASHO_LANG=es` (`src/i18n.rs`); every new user-facing string needs both languages. The eval file is now `eval/questions.toml` with `question` / `tools` keys (the questions stay in Spanish on purpose). Default `languages` is now `["en", "es"]`.
-- 2026-11-19 · 1.2 (partial): verified headlessly in isolated tmux servers: `config` → `update` (6852 pages, 34878 examples) → `query`, the searcher + fill-in + send to a pane without Enter, and the zsh widget (`Ctrl-G` with prior text, pick, cursor at the end, Esc leaves the prompt untouched). Fix: the tmux popup runs with the tmux server's `PATH`, which lacked `~/.cargo/bin`, so `init tmux` now embeds the binary's absolute path. Still to verify by hand: the real `display-popup` and inside an ssh session. Finding for 2.1/2.2: the same tldr command appears twice (en and es) when placeholder names are translated (`{{path/to/file}}` vs `{{ruta/al/archivo}}`), because the merge key is the normalized command. With `languages = ["en", "es"]` the `query tar` descriptions come out in English (the 1.2 criterion said Spanish; use `["es", "en"]` for that).
-- 2026-11-19 · 5.1 done early: the zsh widget now uses `Viewport::Inline` (`ui.height`, default `40%`, or `--height`; asked in `pistasho config`). The tmux popup (`--send-to`) keeps the full screen. ratatui/crossterm read the cursor position through stdout, which in the widget is the `$(...)` pipe (the first attempt failed after a 2 s timeout), so `tui::run` redirects stdout to the tty while it runs. Verified in isolated tmux servers with the prompt at the top and on the last row: pick, fill-in, cancel, cursor at the end of the buffer. Also: `Cargo.toml` description is now English and `libc` is a direct dependency.
+**Lista cuando:** en zsh el buscador abre debajo del prompt, y elegir o cancelar deja el prompt y el cursor intactos, también con el prompt en la última fila. (Hecha antes de tiempo, antes de la fase 2.)
+
+### [ ] 5.2 Empaquetado · M
+- cargo-dist para releases de GitHub (binarios Linux x86_64 / aarch64), paquete AUR y `cargo install pistasho` (publicar el crate).
+
+### [ ] 5.3 Demos reales · S
+- Cambiar los GIFs simulados por grabaciones de `vhs` (archivos `.tape` en `docs/`).
+
+### [ ] 5.4 Documentación y lanzamiento · S
+- README completo, sección de privacidad, cómo contribuir con cheats y preguntas a `eval`, y un CHANGELOG.
+
+---
+
+## Notas
+
+<!-- Anota aquí decisiones o cambios de plan, con fecha. -->
+
+- 2026-11-19 · 1.1: compiló a la primera con las versiones fijadas, sin errores de API ni cambios de versión. Único ajuste: warning `unnecessary_sort_by` de clippy en `history.rs`. Se versionó `Cargo.lock` (es un binario). CI en verde. `cargo install` deja el binario en `~/.cargo/bin`, que no estaba en el `PATH`.
+- 2026-11-19 · Idioma: el proyecto ahora va en inglés por defecto (README, CLAUDE.md, PLAN.md). Las versiones en español se conservan como `README.es.md`, `CLAUDE.es.md` y `PLAN.es.md` y deben mantenerse alineadas. Las cadenas de la interfaz y los comentarios del código se migraron al inglés en el mismo cambio. La interfaz en español sigue disponible con `language = "es"` / `PISTASHO_LANG=es` (`src/i18n.rs`); toda cadena nueva de cara al usuario necesita ambos idiomas. El archivo de eval ahora es `eval/questions.toml` con las claves `question` / `tools` (las preguntas se quedan en español a propósito). Los `languages` por defecto ahora son `["en", "es"]`.
+- 2026-11-19 · 1.2 (parcial): verificado sin interfaz en servidores tmux aislados: `config` → `update` (6852 páginas, 34878 ejemplos) → `query`, el buscador + relleno + envío a un panel sin Enter, y el widget de zsh (`Ctrl-G` con texto previo, elegir, cursor al final, Esc deja el prompt intacto). Arreglo: el popup de tmux corre con el `PATH` del servidor de tmux, que no tenía `~/.cargo/bin`, así que `init tmux` ahora incrusta la ruta absoluta del binario. Falta verificar a mano: el `display-popup` real y dentro de una sesión ssh. Hallazgo para 2.1/2.2: el mismo comando de tldr aparece dos veces (en y es) cuando se traducen los nombres de los marcadores (`{{path/to/file}}` vs `{{ruta/al/archivo}}`), porque la clave de unión es el comando normalizado. Con `languages = ["en", "es"]` las descripciones de `query tar` salen en inglés (el criterio de la 1.2 decía español; usa `["es", "en"]` para eso).
+- 2026-11-19 · 5.1 adelantada: el widget de zsh ahora usa `Viewport::Inline` (`ui.height`, por defecto `40%`, o `--height`; se pregunta en `pistasho config`). El popup de tmux (`--send-to`) mantiene la pantalla completa. ratatui/crossterm leen la posición del cursor por stdout, que en el widget es el pipe de `$(...)` (el primer intento falló tras 2 s de espera), así que `tui::run` redirige stdout al tty mientras corre. Verificado en servidores tmux aislados con el prompt arriba y en la última fila: elegir, relleno, cancelar, cursor al final del buffer. Además: la descripción de `Cargo.toml` ahora está en inglés y `libc` es dependencia directa.
+- 2026-11-19 · ADR 0001 aplicado: Ctrl-Space única entrada; buscador → lista de alternativas. La tarea 2.3 se divide en 2.3a–d; 5.1 absorbida por 2.3b (el viewport en línea ya existe); 2.2 debe devolver N candidatos; 1.2 ya no pule el widget de `Ctrl-G`. Ver `docs/adr/0001-question-mode-single-entry.md`. El README sigue describiendo `Ctrl-G` porque es lo que funciona hoy; actualizarlo en 2.3a.
+- 2026-11-19 · Idioma, revisado: se corrige la nota anterior. Código, comentarios y README (en dos versiones) en inglés; la herramienta en inglés por defecto con español elegible (`language = "es"`, `PISTASHO_LANG`) o detectado (`language = "auto"`, desde `LC_ALL` / `LC_MESSAGES` / `LANG`). Las decisiones, el plan y el contexto del agente se mantienen solo en español: `CLAUDE.md`, `PLAN.md` y `docs/adr/` son un único archivo en español y desaparecen los gemelos en inglés (`CLAUDE.es.md`, `PLAN.es.md` y el ADR en inglés ya no existen).

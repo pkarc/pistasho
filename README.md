@@ -60,7 +60,7 @@ In zsh the searcher opens compactly below the prompt (40% of the screen by defau
 
 ## Language
 
-The interface is in English by default. For Spanish, set `language = "es"` in `config.toml` (or pick it in `pistasho config`) or export `PISTASHO_LANG=es`. The `--help` text is English only.
+The interface is in English by default. Set `language = "es"` in `config.toml` (or pick it in `pistasho config`) for Spanish, or `language = "auto"` to follow the system locale (`LC_ALL`, `LC_MESSAGES`, `LANG`). `PISTASHO_LANG=en|es|auto` overrides the config. The `--help` text is English only.
 
 ## Files
 
@@ -81,7 +81,7 @@ History is read from `history_file` in the configuration, `$HISTFILE` or `~/.zsh
 - [ ] **Phase 4** · LLM fallback (Anthropic / Ollama) with cache; only sends the question + OS + shell
 - [ ] **Phase 5** · packaging (AUR), demos recorded with `vhs`
 
-The detailed task list lives in [PLAN.md](PLAN.md).
+The detailed task list lives in [PLAN.md](PLAN.md) (written in Spanish, like the design decisions in `docs/adr/`).
 
 ## License
 

@@ -1,6 +1,6 @@
 //! Configuration in `~/.config/pistasho/config.toml` and the `pistasho config` wizard.
 
-use crate::i18n::{self, tr, Lang};
+use crate::i18n::{self, tr};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
@@ -11,7 +11,8 @@ pub const TLDR_URL: &str = "https://github.com/tldr-pages/tldr/releases/latest/d
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Interface language: `en` (default) or `es`. `PISTASHO_LANG` overrides it.
+    /// Interface language: `en` (default), `es`, or `auto` to detect it from the system locale.
+    /// `PISTASHO_LANG` overrides it.
     pub language: String,
     /// tldr languages in order of preference; the first one provides the displayed description.
     pub languages: Vec<String>,
@@ -293,10 +294,14 @@ pub fn wizard() -> Result<(Config, bool)> {
     cfg.language = choose(
         &mut stdin,
         "Interface language / Idioma de la interfaz:",
-        &[("en", "English"), ("es", "Español")],
+        &[
+            ("en", "English"),
+            ("es", "Español"),
+            ("auto", "detect from the system / detectar del sistema"),
+        ],
         &cfg.language.clone(),
     )?;
-    i18n::set(Lang::parse(&cfg.language));
+    i18n::set(i18n::resolve(&cfg.language));
     let yes = tr("y", "s");
 
     println!(
