@@ -40,7 +40,7 @@ pistasho init tmux >> ~/.tmux.conf
 | fill-in | `Enter` / `Tab` / `Shift-Tab` | Next / skip / back |
 | fill-in | `Esc` | Insert with the placeholders still missing |
 
-Source labels: `tldr` (tldr pages), `mío` (your cheatsheet), `hist` (your zsh history).
+Source labels: `tldr` (tldr pages), `mine` (your cheatsheet), `hist` (your zsh history).
 
 ### Subcommands
 
@@ -51,8 +51,12 @@ pistasho update                                           # downloads tldr and r
 pistasho add 'fuser -k {{port}}/tcp' -d 'Kill the process on a port' -t net
 pistasho init zsh | tmux
 pistasho config
-pistasho eval eval/preguntas.toml                         # measures searcher accuracy
+pistasho eval eval/questions.toml                         # measures searcher accuracy
 ```
+
+## Language
+
+The interface is in English by default. For Spanish, set `language = "es"` in `config.toml` (or pick it in `pistasho config`) or export `PISTASHO_LANG=es`. The `--help` text is English only.
 
 ## Files
 

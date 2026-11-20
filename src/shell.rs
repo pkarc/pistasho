@@ -1,12 +1,12 @@
-//! Código de integración que imprime `pistasho init zsh|tmux`.
+//! Integration code printed by `pistasho init zsh|tmux`.
 
 use crate::config::Config;
 
 pub fn zsh(cfg: &Config) -> String {
     let key = cfg.keys.search.replace('\'', "");
     format!(
-        r#"# pistasho · integración con zsh
-# En ~/.zshrc:  eval "$(pistasho init zsh)"
+        r#"# pistasho · zsh integration
+# In ~/.zshrc:  eval "$(pistasho init zsh)"
 
 _pistasho_search() {{
   local out
@@ -29,7 +29,7 @@ bindkey -M viins '{key}' _pistasho_search
 pub fn tmux(cfg: &Config) -> String {
     let key = &cfg.keys.tmux;
     format!(
-        "# pistasho · popup de tmux (agrégalo a ~/.tmux.conf)\n\
+        "# pistasho · tmux popup (add it to ~/.tmux.conf)\n\
          bind-key {key} display-popup -E -w 80% -h 60% \"pistasho search --send-to '#{{pane_id}}'\"\n"
     )
 }

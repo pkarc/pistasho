@@ -12,7 +12,7 @@ A Rust tool to find Linux commands from zsh and tmux with a keyboard shortcut. R
 2. **The only thing run on its own is an install, and always with explicit confirmation** showing the exact command. Official package managers only (apt, pacman, dnf, zypper), never `curl | sh`.
 3. **Privacy:** only the question, the OS and the shell are sent to a remote model. Never history, files or paths. Data filtering (e.g. `fc -ln 1 | grep root`) happens locally.
 4. **The UI is drawn on `/dev/tty`; stdout carries only the chosen command.** That way the zsh widget captures it with `$(...)`.
-5. **English by default, Spanish kept aligned.** Docs, code identifiers and (going forward) comments are in English. Every doc has a Spanish twin (`README.es.md`, `CLAUDE.es.md`, `PLAN.es.md`); any change to one must be applied to the other in the same commit. Existing UI strings and code comments are still in Spanish; migrating them (with a language option) is pending.
+5. **English by default, Spanish kept aligned.** Docs, code identifiers, comments and the default UI are in English. The Spanish UI is selected with `language = "es"` or `PISTASHO_LANG=es`; every user-facing string is written at the call site as `tr("English", "Español")` (`src/i18n.rs`), so a new string needs both. Every doc has a Spanish twin (`README.es.md`, `CLAUDE.es.md`, `PLAN.es.md`); any change to one must be applied to the other in the same commit.
 6. **Linux first.** macOS (brew) comes later.
 7. For speed and quality: **measure with `pistasho eval` before adding complexity.**
 
@@ -27,6 +27,7 @@ The detailed task list, with sizes and "done when" criteria, is in `PLAN.md`. Ma
 ```
 src/
   main.rs          clap: search, query, update, add, init {zsh,tmux}, config, eval
+  i18n.rs          UI language (en default, es): `tr("English", "Español")`, `PISTASHO_LANG`
   config.rs        ~/.config/pistasho/config.toml + interactive wizard (`pistasho config`)
   index.rs         Entry/Source; tldr from zip → ~/.local/share/pistasho/index.json; cheats.toml; history
   tldr.rs          tldr-pages markdown parser + pages[.lang]/platform/x.md paths   (no deps)
@@ -35,8 +36,8 @@ src/
   search.rs        nucleo-matcher + bonuses (exact tool +80, mine +40, history up to +40)
   tui.rs           ratatui on /dev/tty, alternate screen, search mode and placeholder fill mode
   shell.rs         code printed by `init zsh` (zle widget) and `init tmux` (display-popup)
-  eval.rs          top-1 / top-3 per tool over eval/preguntas.toml
-eval/preguntas.toml   40 Spanish questions with their correct tools (goal: about 100)
+  eval.rs          top-1 / top-3 per tool over eval/questions.toml
+eval/questions.toml   40 Spanish questions with their correct tools (goal: about 100); keys `question` / `tools`
 examples/cheats.toml
 ```
 
@@ -49,10 +50,10 @@ Already-settled details worth not breaking:
 
 ## Experience design
 
-Three simulated GIFs (not real captures) define the desired interface. If they are in `docs/`, use them as reference:
-1. **Searcher** (`Ctrl-G`): list with `tldr` / `mío` / `hist` labels, description and origin below, placeholder fill-in, tmux popup.
-2. **Question mode** (`Ctrl-Space`): the prompt changes to ` ✦ pregunta `, you type in natural language, Enter → `resolviendo…` spinner → the command is left on the normal prompt. If the tool is missing: a yellow box with OS, package manager and `sudo apt install -y X`, with options `[s]` install, `[a]` alternative without installing and `[esc]` cancel. While installing, apt's output and the sudo password prompt show in the terminal and the command is completed at the end.
-3. **Hard cases:** a `⚡ local · tldr/zip · 41 ms` line below the prompt (a `zle -M`-style message); `✦ llm · haiku · 1.1 s · guardado en caché`; a destructive command with a red box (effect, device data from `lsblk`, signals), left on the prompt highlighted in red with `⚠ destructivo` on the right; devices chosen only among removable ones from `lsblk`.
+Three simulated GIFs (not real captures, drawn with Spanish strings) define the desired interface; the English strings used in the docs are their translations. If they are in `docs/`, use them as reference:
+1. **Searcher** (`Ctrl-G`): list with `tldr` / `mine` / `hist` labels, description and origin below, placeholder fill-in, tmux popup.
+2. **Question mode** (`Ctrl-Space`): the prompt changes to ` ✦ ask `, you type in natural language, Enter → `resolving…` spinner → the command is left on the normal prompt. If the tool is missing: a yellow box with OS, package manager and `sudo apt install -y X`, with options `[y]` install (`[s]` in the Spanish UI), `[a]` alternative without installing and `[esc]` cancel. While installing, apt's output and the sudo password prompt show in the terminal and the command is completed at the end.
+3. **Hard cases:** a `⚡ local · tldr/zip · 41 ms` line below the prompt (a `zle -M`-style message); `✦ llm · haiku · 1.1 s · saved to cache`; a destructive command with a red box (effect, device data from `lsblk`, signals), left on the prompt highlighted in red with `⚠ destructive` on the right; devices chosen only among removable ones from `lsblk`.
 
 Pending from phase 1: the GIFs show the searcher **compact below the prompt** (like `fzf --height 40%`). Today it uses the full alternate screen. It can be switched to ratatui's `Viewport::Inline` once everything else works.
 
@@ -92,7 +93,8 @@ Task-level detail is in `PLAN.md`. Summary:
 ## Configuration (`~/.config/pistasho/config.toml`)
 
 ```toml
-languages = ["es", "en"]
+language = "en"                 # UI language: en | es
+languages = ["en", "es"]        # tldr languages; the first provides the displayed description
 platforms = ["common", "linux"]
 history = true
 history_limit = 5000
@@ -117,6 +119,6 @@ The user asked for everything to be configurable **from the first run**, through
 ```sh
 cargo build && cargo clippy --all-targets && cargo test
 cargo run -- query comprimir carpeta        # search without the interface
-cargo run -- eval                           # accuracy over eval/preguntas.toml
+cargo run -- eval                           # accuracy over eval/questions.toml
 cargo run -- init zsh                       # inspect the generated widget
 ```

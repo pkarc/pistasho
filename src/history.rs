@@ -1,19 +1,19 @@
-//! Lectura del historial de zsh (`~/.zsh_history`).
+//! Reads the zsh history (`~/.zsh_history`).
 //!
-//! Sin dependencias externas para poder probarlo con `rustc --test`.
+//! No external dependencies, so it can be tested with `rustc --test`.
 
 use std::collections::HashMap;
 
-/// Un comando del historial con cuántas veces se usó y su posición más reciente.
+/// A history command with how many times it was used and its most recent position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistItem {
     pub cmd: String,
     pub count: u32,
-    /// Índice de la última aparición; mayor = más reciente.
+    /// Index of the last occurrence; higher = more recent.
     pub last: usize,
 }
 
-/// zsh "metafica" los bytes especiales: 0x83 seguido de `b` significa `b ^ 0x20`.
+/// zsh "metafies" special bytes: 0x83 followed by `b` means `b ^ 0x20`.
 pub fn unmetafy(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut it = bytes.iter();
@@ -29,8 +29,8 @@ pub fn unmetafy(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Separa el historial en comandos. Soporta el formato extendido
-/// (`: 1700000000:0;cmd`) y comandos multilínea terminados en `\`.
+/// Splits the history into commands. Supports the extended format
+/// (`: 1700000000:0;cmd`) and multiline commands ending in `\`.
 pub fn parse_lines(text: &str) -> Vec<String> {
     let mut cmds = Vec::new();
     let mut current: Option<String> = None;
@@ -73,7 +73,7 @@ fn strip_extended(line: &str) -> &str {
     line
 }
 
-/// Comandos que no vale la pena sugerir.
+/// Commands not worth suggesting.
 fn is_noise(cmd: &str) -> bool {
     const NOISE: &[&str] = &[
         "ls", "ll", "la", "cd", "clear", "exit", "pwd", "history", "fg", "bg",
@@ -82,7 +82,7 @@ fn is_noise(cmd: &str) -> bool {
     (NOISE.contains(&first) && cmd.split_whitespace().count() <= 2) || cmd.len() < 3
 }
 
-/// Agrupa comandos repetidos y devuelve los `limit` más recientes.
+/// Groups repeated commands and returns the `limit` most recent ones.
 pub fn aggregate(cmds: &[String], limit: usize) -> Vec<HistItem> {
     let mut map: HashMap<&str, (u32, usize)> = HashMap::new();
     for (i, c) in cmds.iter().enumerate() {
@@ -106,7 +106,7 @@ pub fn aggregate(cmds: &[String], limit: usize) -> Vec<HistItem> {
     items
 }
 
-/// Lee y procesa un archivo de historial completo.
+/// Reads and processes a whole history file.
 pub fn load(bytes: &[u8], limit: usize) -> Vec<HistItem> {
     let text = String::from_utf8_lossy(&unmetafy(bytes)).into_owned();
     aggregate(&parse_lines(&text), limit)
@@ -127,13 +127,13 @@ mod tests {
 
     #[test]
     fn multiline() {
-        let h = ": 1700000000:0;docker run \\\n  -it ubuntu\n: 1700000002:0;echo hola\n";
-        assert_eq!(parse_lines(h), vec!["docker run \n  -it ubuntu", "echo hola"]);
+        let h = ": 1700000000:0;docker run \\\n  -it ubuntu\n: 1700000002:0;echo hello\n";
+        assert_eq!(parse_lines(h), vec!["docker run \n  -it ubuntu", "echo hello"]);
     }
 
     #[test]
     fn metafied_utf8() {
-        // regla de zsh: 0x83 seguido de b significa b ^ 0x20 (0x83 0xA1 -> 0x81)
+        // zsh rule: 0x83 followed by b means b ^ 0x20 (0x83 0xA1 -> 0x81)
         assert_eq!(unmetafy(&[b'a', 0x83, 0xA1, b'b']), vec![b'a', 0x81, b'b']);
     }
 

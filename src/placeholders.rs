@@ -1,15 +1,15 @@
-//! Marcadores `{{nombre}}` dentro de un comando.
+//! `{{name}}` placeholders inside a command.
 //!
-//! Sin dependencias externas para poder probarlo con `rustc --test`.
+//! No external dependencies, so it can be tested with `rustc --test`.
 
-/// Un trozo de plantilla: texto literal o un marcador.
+/// A piece of a template: literal text or a placeholder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Part {
     Text(String),
     Placeholder(String),
 }
 
-/// Divide un comando en texto y marcadores. Un `{{` sin cierre se trata como texto.
+/// Splits a command into text and placeholders. An unclosed `{{` is treated as text.
 pub fn parse(cmd: &str) -> Vec<Part> {
     let mut parts = Vec::new();
     let mut rest = cmd;
@@ -40,7 +40,7 @@ fn push_text(parts: &mut Vec<Part>, s: &str) {
     }
 }
 
-/// Nombres de los marcadores en orden de aparición.
+/// Placeholder names in order of appearance.
 pub fn names(cmd: &str) -> Vec<String> {
     parse(cmd)
         .into_iter()
@@ -55,8 +55,8 @@ pub fn has_placeholders(cmd: &str) -> bool {
     parse(cmd).iter().any(|p| matches!(p, Part::Placeholder(_)))
 }
 
-/// Reconstruye el comando sustituyendo marcadores en orden.
-/// `None` (o un valor vacío) deja el marcador original `{{x}}`.
+/// Rebuilds the command by substituting placeholders in order.
+/// `None` (or an empty value) keeps the original `{{x}}` placeholder.
 pub fn fill(cmd: &str, values: &[Option<String>]) -> String {
     let mut out = String::new();
     let mut i = 0;
@@ -79,8 +79,8 @@ pub fn fill(cmd: &str, values: &[Option<String>]) -> String {
     out
 }
 
-/// tldr usa `{{[-o|--opcion]}}` para opciones con forma corta y larga.
-/// Las convertimos en la forma larga, que es más legible en el prompt.
+/// tldr uses `{{[-o|--option]}}` for options with a short and a long form.
+/// We convert them to the long form, which is more readable on the prompt.
 pub fn normalize_tldr(cmd: &str) -> String {
     let mut out = String::new();
     for part in parse(cmd) {
@@ -109,7 +109,7 @@ fn option_long_form(inner: &str) -> Option<String> {
     Some(alts.last().unwrap().to_string())
 }
 
-/// Nombre corto para mostrar en el prompt de relleno: `path/to/file` → `file`.
+/// Short name to show in the fill-in prompt: `path/to/file` → `file`.
 pub fn display_name(name: &str) -> &str {
     let n = name.trim_end_matches("...").trim();
     n.rsplit('/').next().unwrap_or(n)
@@ -122,10 +122,10 @@ mod tests {
     #[test]
     fn parse_basic() {
         assert_eq!(
-            parse("tar -czf {{archivo}}.tar.gz {{dir}}"),
+            parse("tar -czf {{file}}.tar.gz {{dir}}"),
             vec![
                 Part::Text("tar -czf ".into()),
-                Part::Placeholder("archivo".into()),
+                Part::Placeholder("file".into()),
                 Part::Text(".tar.gz ".into()),
                 Part::Placeholder("dir".into()),
             ]
@@ -140,11 +140,11 @@ mod tests {
 
     #[test]
     fn fill_partial() {
-        let cmd = "lsof -i :{{puerto}} -u {{usuario}}";
-        assert_eq!(names(cmd), vec!["puerto", "usuario"]);
+        let cmd = "lsof -i :{{port}} -u {{user}}";
+        assert_eq!(names(cmd), vec!["port", "user"]);
         assert_eq!(
             fill(cmd, &[Some("8080".into()), None]),
-            "lsof -i :8080 -u {{usuario}}"
+            "lsof -i :8080 -u {{user}}"
         );
         assert_eq!(fill(cmd, &[Some("".into())]), cmd);
     }
@@ -155,14 +155,14 @@ mod tests {
             normalize_tldr("ls {{[-a|--all]}} {{path/to/dir}}"),
             "ls --all {{path/to/dir}}"
         );
-        // un marcador normal entre corchetes no se toca
-        assert_eq!(normalize_tldr("echo {{[texto]}}"), "echo {{[texto]}}");
+        // a normal bracketed placeholder is left alone
+        assert_eq!(normalize_tldr("echo {{[text]}}"), "echo {{[text]}}");
     }
 
     #[test]
     fn display() {
         assert_eq!(display_name("path/to/file"), "file");
         assert_eq!(display_name("path/to/file1 path/to/file2 ..."), "file2");
-        assert_eq!(display_name("puerto"), "puerto");
+        assert_eq!(display_name("port"), "port");
     }
 }

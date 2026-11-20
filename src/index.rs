@@ -1,6 +1,7 @@
-//! Índice de comandos: tldr (precalculado en `pistasho update`), tu cheatsheet e historial.
+//! Command index: tldr (precomputed by `pistasho update`), your cheatsheet and your history.
 
 use crate::config::{self, Config};
+use crate::i18n::{lang, tr, Lang};
 use crate::{history, placeholders, tldr};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -16,10 +17,11 @@ pub enum Source {
 }
 
 impl Source {
+    /// Label shown next to each result (translated).
     pub fn tag(self) -> &'static str {
         match self {
             Source::Tldr => "tldr",
-            Source::Cheat => "mío",
+            Source::Cheat => tr("mine", "mío"),
             Source::Hist => "hist",
         }
     }
@@ -29,15 +31,15 @@ impl Source {
 pub struct Entry {
     pub cmd: String,
     pub desc: String,
-    /// Texto extra solo para buscar: descripciones en otros idiomas, resumen de la página, etiquetas.
+    /// Extra text used only for searching: descriptions in other languages, page summary, tags.
     #[serde(default)]
     pub alt: String,
-    /// Nombre de la herramienta (página de tldr o primera palabra del comando).
+    /// Tool name (tldr page or first word of the command).
     pub tool: String,
     pub source: Source,
-    /// De dónde viene, para mostrarlo: `tldr · linux/ss`, `cheats.toml`, `historial`.
+    /// Where it comes from, for display: `tldr · linux/ss`, `cheats.toml`, `history`.
     pub origin: String,
-    /// Veces usado (historial).
+    /// Times used (history).
     #[serde(default)]
     pub count: u32,
 }
@@ -53,17 +55,21 @@ const INDEX_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------- tldr
 
-/// Descarga el zip de tldr y construye el índice.
+/// Downloads the tldr zip and builds the index.
 pub fn update(cfg: &Config) -> Result<(usize, usize)> {
-    eprintln!("Descargando {} …", cfg.tldr_url);
+    eprintln!("{} {} …", tr("Downloading", "Descargando"), cfg.tldr_url);
     let resp = ureq::get(&cfg.tldr_url)
         .call()
-        .context("falló la descarga de tldr")?;
+        .context(tr("tldr download failed", "falló la descarga de tldr"))?;
     let mut bytes = Vec::new();
     resp.into_reader()
         .take(300 * 1024 * 1024)
         .read_to_end(&mut bytes)?;
-    eprintln!("Procesando {:.1} MB …", bytes.len() as f64 / 1e6);
+    eprintln!(
+        "{} {:.1} MB …",
+        tr("Processing", "Procesando"),
+        bytes.len() as f64 / 1e6
+    );
 
     let (entries, pages) = build_from_zip(&bytes, &cfg.languages, &cfg.platforms)?;
     let n = entries.len();
@@ -82,8 +88,9 @@ pub fn update(cfg: &Config) -> Result<(usize, usize)> {
 }
 
 pub fn build_from_zip(bytes: &[u8], langs: &[String], platforms: &[String]) -> Result<(Vec<Entry>, usize)> {
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).context("zip de tldr inválido")?;
-    // (plataforma, página) -> idioma -> página
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .context(tr("invalid tldr zip", "zip de tldr inválido"))?;
+    // (platform, page) -> language -> page
     let mut pages: HashMap<(String, String), HashMap<String, tldr::Page>> = HashMap::new();
 
     for i in 0..zip.len() {
@@ -116,8 +123,8 @@ pub fn build_from_zip(bytes: &[u8], langs: &[String], platforms: &[String]) -> R
     Ok((entries, n_pages))
 }
 
-/// Une las traducciones de una página: la descripción principal sale del idioma preferido
-/// y las demás se guardan en `alt` para que una búsqueda en cualquier idioma la encuentre.
+/// Joins the translations of a page: the main description comes from the preferred language
+/// and the rest go into `alt` so a search in any language finds it.
 fn merge_page(
     platform: &str,
     name: &str,
@@ -127,7 +134,7 @@ fn merge_page(
     let ordered: Vec<&tldr::Page> = langs.iter().filter_map(|l| by_lang.get(l)).collect();
     let summaries: Vec<&str> = ordered.iter().map(|p| p.summary.as_str()).collect();
 
-    // comando normalizado -> descripciones en orden de idioma
+    // normalized command -> descriptions in language order
     let mut order: Vec<String> = Vec::new();
     let mut descs: HashMap<String, Vec<String>> = HashMap::new();
     for page in &ordered {
@@ -168,10 +175,15 @@ fn load_tldr() -> Result<Option<Vec<Entry>>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    let idx: IndexFile = serde_json::from_reader(BufReader::new(file))
-        .with_context(|| format!("índice dañado: {} (ejecuta `pistasho update`)", path.display()))?;
+    let idx: IndexFile = serde_json::from_reader(BufReader::new(file)).with_context(|| match lang() {
+        Lang::En => format!("corrupt index: {} (run `pistasho update`)", path.display()),
+        Lang::Es => format!("índice dañado: {} (ejecuta `pistasho update`)", path.display()),
+    })?;
     if idx.version != INDEX_VERSION {
-        anyhow::bail!("el índice es de otra versión; ejecuta `pistasho update`");
+        anyhow::bail!(tr(
+            "the index is from another version; run `pistasho update`",
+            "el índice es de otra versión; ejecuta `pistasho update`"
+        ));
     }
     Ok(Some(idx.entries))
 }
@@ -208,7 +220,8 @@ pub fn load_cheats() -> Result<Vec<Entry>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
-    let file: CheatFile = toml::from_str(&text).with_context(|| format!("error en {}", path.display()))?;
+    let file: CheatFile = toml::from_str(&text)
+        .with_context(|| format!("{} {}", tr("error in", "error en"), path.display()))?;
     Ok(file
         .cheats
         .into_iter()
@@ -224,7 +237,7 @@ pub fn load_cheats() -> Result<Vec<Entry>> {
         .collect())
 }
 
-/// Agrega una entrada al final de `cheats.toml` sin reescribir lo que ya tienes.
+/// Appends an entry to the end of `cheats.toml` without rewriting what you already have.
 pub fn add_cheat(cheat: Cheat) -> Result<std::path::PathBuf> {
     let path = config::cheats_path()?;
     std::fs::create_dir_all(path.parent().unwrap())?;
@@ -238,7 +251,7 @@ pub fn add_cheat(cheat: Cheat) -> Result<std::path::PathBuf> {
     Ok(path)
 }
 
-// ---------------------------------------------------------------- historial
+// ---------------------------------------------------------------- history
 
 pub fn load_history(cfg: &Config) -> Vec<Entry> {
     if !cfg.history {
@@ -254,21 +267,22 @@ pub fn load_history(cfg: &Config) -> Vec<Entry> {
         .into_iter()
         .map(|h| Entry {
             tool: first_word(&h.cmd),
-            desc: if h.count == 1 {
-                "usado 1 vez".into()
-            } else {
-                format!("usado {} veces", h.count)
+            desc: match (lang(), h.count) {
+                (Lang::En, 1) => "used 1 time".into(),
+                (Lang::En, n) => format!("used {n} times"),
+                (Lang::Es, 1) => "usado 1 vez".into(),
+                (Lang::Es, n) => format!("usado {n} veces"),
             },
             alt: String::new(),
             cmd: h.cmd,
             source: Source::Hist,
-            origin: "historial".into(),
+            origin: tr("history", "historial").into(),
             count: h.count,
         })
         .collect()
 }
 
-// ---------------------------------------------------------------- todo junto
+// ---------------------------------------------------------------- everything together
 
 pub struct Index {
     pub entries: Vec<Entry>,

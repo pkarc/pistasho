@@ -1,6 +1,7 @@
-//! Interfaz del buscador. Dibuja en `/dev/tty` para que stdout quede libre
-//! y el widget de zsh pueda capturar el comando elegido.
+//! Searcher interface. Draws on `/dev/tty` so stdout stays free
+//! and the zsh widget can capture the chosen command.
 
+use crate::i18n::tr;
 use crate::index::{Entry, Source};
 use crate::placeholders::{self, Part};
 use crate::search::Searcher;
@@ -20,7 +21,7 @@ use std::fs::File;
 
 const MAX_RESULTS: usize = 300;
 
-// Paleta (Tokyo Night)
+// Palette (Tokyo Night)
 const FG: Color = Color::Rgb(0xc0, 0xca, 0xf5);
 const GRAY: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const MAG: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
@@ -71,7 +72,7 @@ impl<'a> App<'a> {
     }
 }
 
-/// Restaura la terminal aunque haya un panic.
+/// Restores the terminal even on a panic.
 struct Guard;
 
 impl Drop for Guard {
@@ -88,7 +89,7 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
         .read(true)
         .write(true)
         .open("/dev/tty")
-        .context("no pude abrir /dev/tty")?;
+        .context(tr("could not open /dev/tty", "no pude abrir /dev/tty"))?;
     let mut tty_w = tty.try_clone()?;
     enable_raw_mode()?;
     let _guard = Guard;
@@ -173,7 +174,7 @@ fn on_search_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
                 Some(Outcome::Selected(entry.cmd.clone()))
             }
         }
-        // Tab: insertar la plantilla tal cual, con los {{marcadores}}
+        // Tab: insert the template as is, with the {{placeholders}}
         KeyCode::Tab => app.selected().map(|e| Outcome::Selected(e.cmd.clone())),
         KeyCode::Backspace => {
             app.query.pop();
@@ -191,7 +192,7 @@ fn on_search_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
 
 fn on_fill_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
     let fill = app.fill.as_mut()?;
-    // Esc: insertar con los marcadores que falten
+    // Esc: insert with the placeholders still missing
     if key.code == KeyCode::Esc || ctrl(&key, 'g') {
         return Some(Outcome::Selected(placeholders::fill(
             &fill.template,
@@ -233,7 +234,7 @@ fn on_fill_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
     None
 }
 
-// ---------------------------------------------------------------- dibujo
+// ---------------------------------------------------------------- drawing
 
 fn tag_color(s: Source) -> Color {
     match s {
@@ -243,13 +244,13 @@ fn tag_color(s: Source) -> Color {
     }
 }
 
-/// Spans de un comando con los {{marcadores}} resaltados.
+/// Spans of a command with the {{placeholders}} highlighted.
 fn cmd_spans(cmd: &str, bg: Option<Color>) -> Vec<Span<'static>> {
     let base = |c: Color| match bg {
         Some(b) => Style::default().fg(c).bg(b),
         None => Style::default().fg(c),
     };
-    // los comandos multilínea del historial se muestran en una sola línea
+    // multiline history commands are shown on a single line
     let flat = cmd.replace('\n', " ⏎ ");
     placeholders::parse(&flat)
         .into_iter()
@@ -279,9 +280,15 @@ fn draw(f: &mut Frame, app: &mut App) {
     draw_detail(f, app, detail);
 
     let hint = if app.fill.is_some() {
-        " ⏎ siguiente · tab saltar · shift-tab volver · esc insertar así · ctrl-c cancelar"
+        tr(
+            " ⏎ next · tab skip · shift-tab back · esc insert as is · ctrl-c cancel",
+            " ⏎ siguiente · tab saltar · shift-tab volver · esc insertar así · ctrl-c cancelar",
+        )
     } else {
-        " ↑↓ mover · ⏎ insertar · tab sin rellenar · ctrl-u borrar · esc salir"
+        tr(
+            " ↑↓ move · ⏎ insert · tab without filling · ctrl-u clear · esc quit",
+            " ↑↓ mover · ⏎ insertar · tab sin rellenar · ctrl-u borrar · esc salir",
+        )
     };
     f.render_widget(
         Paragraph::new(Line::styled(hint, Style::default().fg(GRAY))),
@@ -326,7 +333,7 @@ fn draw_fill(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(fill.input.clone(), Style::default().fg(FG)),
     ]);
-    let title = format!("rellenar {}/{}", fill.cur + 1, fill.names.len());
+    let title = format!("{} {}/{}", tr("fill", "rellenar"), fill.cur + 1, fill.names.len());
     let b = block(&title);
     let inner = b.inner(area);
     f.render_widget(Paragraph::new(line).block(b), area);
@@ -344,7 +351,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     if let Some(fill) = &app.fill {
-        // vista previa del comando con el marcador actual resaltado
+        // command preview with the current placeholder highlighted
         let mut spans = vec![Span::raw(" ")];
         let mut i = 0;
         for p in placeholders::parse(&fill.template) {
@@ -370,9 +377,12 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     if app.results.is_empty() {
         let msg = if app.entries.is_empty() {
-            " Índice vacío: ejecuta `pistasho update`"
+            tr(
+                " Empty index: run `pistasho update`",
+                " Índice vacío: ejecuta `pistasho update`",
+            )
         } else {
-            " sin resultados"
+            tr(" no results", " sin resultados")
         };
         f.render_widget(
             Paragraph::new(Line::styled(msg, Style::default().fg(GRAY))),
@@ -381,7 +391,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // desplazamiento para que la selección siempre se vea
+    // scroll so the selection is always visible
     if app.sel < app.offset {
         app.offset = app.sel;
     } else if app.sel >= app.offset + h {

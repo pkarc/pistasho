@@ -39,7 +39,7 @@ The code was never compiled with its dependencies.
 
 ### [ ] 1.4 `eval` baseline · S
 - Run `pistasho eval` and save top-1 / top-3 in `docs/eval.md`.
-- Grow `eval/preguntas.toml` toward ~100 questions with commands the user really uses (can be an ongoing task).
+- Grow `eval/questions.toml` toward ~100 questions with commands the user really uses (can be an ongoing task).
 
 **Done when:** `docs/eval.md` has the phase 1 baseline with a date.
 
@@ -59,14 +59,14 @@ The code was never compiled with its dependencies.
 ### [ ] 2.2 `pistasho ask` with BM25 · M
 - `ask "<question>"` subcommand that returns the best candidate by BM25 (`bm25(entries_fts)`), with `--json` for debugging (candidates and scores).
 - Remove Spanish and English stop words from the question before searching ("qué", "cómo", "de", "the"…).
-- Raise the weight of `mío` entries and of frequently used history entries.
-- `eval` accepts `--modo fuzzy|bm25` to compare.
+- Raise the weight of `mine` entries and of frequently used history entries.
+- `eval` accepts `--mode fuzzy|bm25` to compare.
 
-**Done when:** `pistasho eval --modo bm25` clearly beats the 1.4 baseline and the result is recorded in `docs/eval.md`.
+**Done when:** `pistasho eval --mode bm25` clearly beats the 1.4 baseline and the result is recorded in `docs/eval.md`.
 
 ### [ ] 2.3 Question-mode widget (`Ctrl-Space`) · M
 - `init zsh` adds the `_pistasho_ask` widget on `keys.ask`.
-- GIF 2 experience: the prompt changes to ` ✦ pregunta ` with a hint on the right (`⏎ preguntar · esc salir`). Enter resolves and leaves the command on the normal prompt; Esc returns to the original prompt unchanged.
+- GIF 2 experience: the prompt changes to ` ✦ ask ` with a hint on the right (`⏎ ask · esc exit`). Enter resolves and leaves the command on the normal prompt; Esc returns to the original prompt unchanged.
 - Recommended option: the binary reads the question on `/dev/tty` inline (no alternate screen), shows the spinner and returns the command on stdout. Alternative: `zle recursive-edit` with a temporary `PS1`.
 - Below the prompt, a `zle -M` message: `⚡ local · tldr/zip · 12 ms`.
 - If the command has placeholders, they are asked for just like in the searcher.
@@ -89,8 +89,8 @@ The code was never compiled with its dependencies.
 **Done when:** tested on Ubuntu and Arch (containers are fine), with tests for the table and the os-release parser.
 
 ### [ ] 2.6 Install flow · M
-- GIF 2 confirmation box: command, system, `Instalar: sudo apt install -y X`, options `[s]` install, `[a]` alternative, `[esc]` cancel.
-- On confirm: run the install in the foreground inheriting the tty (sudo asks for the password and apt's output is visible). When done, verify the binary again, show `✓ X instalado` and complete the command.
+- GIF 2 confirmation box: command, system, `Install: sudo apt install -y X`, options `[y]` install, `[a]` alternative, `[esc]` cancel. (In the Spanish UI the install key is `[s]`.)
+- On confirm: run the install in the foreground inheriting the tty (sudo asks for the password and apt's output is visible). When done, verify the binary again, show `✓ X installed` and complete the command.
 - On failure: show the error and leave the prompt untouched.
 - Never install without confirmation, nor with `--yes` in a default configuration.
 
@@ -104,19 +104,19 @@ The code was never compiled with its dependencies.
 
 ### [ ] 2.8 Risk rules · M
 - `risk` module with patterns: `rm -rf` (especially on `/`, `~` or `*`), `dd … of=/dev/…`, `mkfs*`, `wipefs`, `shred`, `chmod/chown -R` on `/`, `> /dev/sd*`, fork bomb, `:(){`, `git push --force` to main, `DROP TABLE`…
-- Levels: `ok`, `cuidado` (caution), `destructivo` (destructive).
+- Levels: `ok`, `caution`, `destructive`.
 - If a placeholder is a device (`{{dispositivo}}`, `/dev/sdX`): offer only the removable devices from `lsblk -J -o NAME,MODEL,SIZE,FSTYPE,MOUNTPOINT,RM`.
-- On `destructivo`, the GIF 3 red box. The command stays on the prompt with `⚠ destructivo` in `RPROMPT` and highlighted (`region_highlight`).
+- On `destructive`, the GIF 3 red box. The command stays on the prompt with `⚠ destructive` in `RPROMPT` and highlighted (`region_highlight`).
 - Applies to every command coming out of `ask`, and to the searcher too.
 
-**Done when:** there are tests per pattern, including obvious false positives (`rm -rf ./build` is `cuidado`, not `destructivo`), and the GIF 3 USB case works.
+**Done when:** there are tests per pattern, including obvious false positives (`rm -rf ./build` is `caution`, not `destructive`), and the GIF 3 USB case works.
 
 ### [ ] 2.9 Multilingual embeddings · L (split into 2.9a / 2.9b)
 - **2.9a:** choose the model (`multilingual-e5-small` family, quantized) and the execution route (`fastembed` or `ort` directly). Measure RAM, size and per-question latency on the user's machine. Download it in `update`; do not bundle it in the binary.
 - **2.9b:** precompute the vectors of all entries in `update` and store them in SQLite as a blob. When asking, compute the question's vector, cosine similarity (brute force over ~30k vectors is enough), and fuse with BM25 by ranks (RRF, k=60).
 - `search.embeddings = true|false` option in the configuration and in the wizard.
 
-**Done when:** `eval --modo hybrid` beats `bm25`, `ask` latency stays under ~150 ms, and it is recorded in `docs/eval.md`. If it does not improve, leave it off by default and note why.
+**Done when:** `eval --mode hybrid` beats `bm25`, `ask` latency stays under ~150 ms, and it is recorded in `docs/eval.md`. If it does not improve, leave it off by default and note why.
 
 ### [ ] 2.10 Phase 2 wrap-up · S
 - Final phase `eval`, updated README and a real `vhs` GIF of question mode.
@@ -131,7 +131,7 @@ The code was never compiled with its dependencies.
 - `Decide` trait with `choice(state, options) -> (index, prob)` and `noul(state, question) -> prob`.
 - HTTP client for the Jev-compatible API, which serves both Jev and laya-serve; `decide.endpoint`, `decide.api_key_env`.
 - `ask` uses choice among the 10 best candidates + "none".
-- `eval --modo hybrid+decide`.
+- `eval --mode hybrid+decide`.
 
 **Done when:** it works against laya-serve (for example on the user's Proxmox) and is measured in `eval`.
 
@@ -176,7 +176,7 @@ The code was never compiled with its dependencies.
 
 ### [ ] 4.4 Validation and cache · S
 - Every LLM command goes through 2.4 (binaries), 2.5/2.6 (install) and 2.8 (risk) before reaching the prompt.
-- Cache normalized question → command in SQLite. A repeated question resolves as `⚡ local · caché`.
+- Cache normalized question → command in SQLite. A repeated question resolves as `⚡ local · cache`.
 - Option to save an LLM command that worked for you into `cheats.toml`.
 
 **Done when:** the second time the same question is asked, the LLM is not called.
@@ -204,4 +204,4 @@ The code was never compiled with its dependencies.
 <!-- Record decisions or plan changes here, with a date. -->
 
 - 2026-11-19 · 1.1: it compiled on the first try with the pinned versions, with no API errors or version changes. Only adjustment: the `unnecessary_sort_by` clippy warning in `history.rs`. `Cargo.lock` is now versioned (it is a binary). CI green. `cargo install` puts the binary in `~/.cargo/bin`, which was not in `PATH`.
-- 2026-11-19 · Language: the project is now English by default (README, CLAUDE.md, PLAN.md). The Spanish versions are kept as `README.es.md`, `CLAUDE.es.md` and `PLAN.es.md` and must stay aligned. UI strings and code comments are still Spanish; migration pending.
+- 2026-11-19 · Language: the project is now English by default (README, CLAUDE.md, PLAN.md). The Spanish versions are kept as `README.es.md`, `CLAUDE.es.md` and `PLAN.es.md` and must stay aligned. UI strings and code comments were migrated to English in the same change. The Spanish UI stays available through `language = "es"` / `PISTASHO_LANG=es` (`src/i18n.rs`); every new user-facing string needs both languages. The eval file is now `eval/questions.toml` with `question` / `tools` keys (the questions stay in Spanish on purpose). Default `languages` is now `["en", "es"]`.

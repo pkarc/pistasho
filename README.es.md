@@ -51,8 +51,12 @@ pistasho update                                             # descarga tldr y re
 pistasho add 'fuser -k {{puerto}}/tcp' -d 'Matar el proceso de un puerto' -t red
 pistasho init zsh | tmux
 pistasho config
-pistasho eval eval/preguntas.toml                           # mide la precisión del buscador
+pistasho eval eval/questions.toml                           # mide la precisión del buscador
 ```
+
+## Idioma
+
+La interfaz va en inglés por defecto. Para español, pon `language = "es"` en `config.toml` (o elígelo en `pistasho config`) o exporta `PISTASHO_LANG=es`. El texto de `--help` solo está en inglés.
 
 ## Archivos
 

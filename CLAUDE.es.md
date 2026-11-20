@@ -12,7 +12,7 @@ Herramienta en Rust para encontrar comandos de Linux desde zsh y tmux con un ata
 2. **Lo único que se ejecuta por cuenta propia es una instalación, y siempre con confirmación explícita** que muestra el comando exacto. Solo gestores oficiales (apt, pacman, dnf, zypper), nunca `curl | sh`.
 3. **Privacidad:** a un modelo remoto solo se envían la pregunta, el OS y el shell. Nunca el historial, archivos ni rutas. El filtrado de datos (por ejemplo `fc -ln 1 | grep root`) ocurre en local.
 4. **La interfaz se dibuja en `/dev/tty`; stdout lleva solo el comando elegido.** Así el widget de zsh lo captura con `$(...)`.
-5. **Inglés por defecto, español alineado.** La documentación, los identificadores y (en adelante) los comentarios van en inglés. Cada documento tiene su gemelo en español (`README.es.md`, `CLAUDE.es.md`, `PLAN.es.md`); todo cambio en uno se aplica al otro en el mismo commit. Las cadenas de la interfaz y los comentarios actuales siguen en español; migrarlos (con una opción de idioma) está pendiente.
+5. **Inglés por defecto, español alineado.** La documentación, los identificadores, los comentarios y la interfaz por defecto van en inglés. La interfaz en español se elige con `language = "es"` o `PISTASHO_LANG=es`; toda cadena de cara al usuario se escribe en el sitio de uso como `tr("English", "Español")` (`src/i18n.rs`), así que una cadena nueva necesita ambas. Cada documento tiene su gemelo en español (`README.es.md`, `CLAUDE.es.md`, `PLAN.es.md`); todo cambio en uno se aplica al otro en el mismo commit.
 6. **Linux primero.** macOS (brew) queda para después.
 7. Para la velocidad y la calidad: **medir con `pistasho eval` antes de agregar complejidad.**
 
@@ -27,6 +27,7 @@ La lista detallada de tareas, con tamaños y criterios de "lista cuando", está 
 ```
 src/
   main.rs          clap: search, query, update, add, init {zsh,tmux}, config, eval
+  i18n.rs          idioma de la interfaz (en por defecto, es): `tr("English", "Español")`, `PISTASHO_LANG`
   config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
   index.rs         Entry/Source; tldr desde zip → ~/.local/share/pistasho/index.json; cheats.toml; historial
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
@@ -35,8 +36,8 @@ src/
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40)
   tui.rs           ratatui en /dev/tty, pantalla alternativa, modo búsqueda y modo relleno de marcadores
   shell.rs         código que imprime `init zsh` (widget zle) e `init tmux` (display-popup)
-  eval.rs          top-1 / top-3 por herramienta sobre eval/preguntas.toml
-eval/preguntas.toml   40 preguntas en español con sus herramientas correctas (meta: unas 100)
+  eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml
+eval/questions.toml   40 preguntas en español con sus herramientas correctas (meta: unas 100); claves `question` / `tools`
 examples/cheats.toml
 ```
 
@@ -49,7 +50,7 @@ Detalles ya resueltos que conviene no romper:
 
 ## Diseño de la experiencia
 
-Hay tres GIFs simulados (no capturas reales) que definen la interfaz deseada. Si están en `docs/`, úsalos como referencia:
+Hay tres GIFs simulados (no capturas reales, dibujados con textos en español) que definen la interfaz deseada; los textos en inglés de la documentación en inglés son su traducción. Si están en `docs/`, úsalos como referencia:
 1. **Buscador** (`Ctrl-G`): lista con etiquetas `tldr` / `mío` / `hist`, descripción y origen abajo, relleno de marcadores, popup de tmux.
 2. **Modo pregunta** (`Ctrl-Space`): el prompt cambia a ` ✦ pregunta `, escribes en lenguaje natural, Enter → spinner `resolviendo…` → el comando queda en el prompt normal. Si falta la herramienta: caja amarilla con OS, gestor y `sudo apt install -y X`, con las opciones `[s]` instalar, `[a]` alternativa sin instalar y `[esc]` cancelar. Al instalar, la salida de apt y la contraseña de sudo se ven en la terminal y al final se completa el comando.
 3. **Casos difíciles:** línea `⚡ local · tldr/zip · 41 ms` debajo del prompt (mensaje tipo `zle -M`); `✦ llm · haiku · 1.1 s · guardado en caché`; comando destructivo con caja roja (efecto, datos del dispositivo desde `lsblk`, señales), que queda en el prompt resaltado en rojo con `⚠ destructivo` a la derecha; dispositivos elegidos solo entre los extraíbles de `lsblk`.
@@ -92,7 +93,8 @@ El detalle por tareas está en `PLAN.md`. Resumen:
 ## Configuración (`~/.config/pistasho/config.toml`)
 
 ```toml
-languages = ["es", "en"]
+language = "en"                 # idioma de la interfaz: en | es
+languages = ["en", "es"]        # idiomas de tldr; el primero da la descripción que se muestra
 platforms = ["common", "linux"]
 history = true
 history_limit = 5000
@@ -117,6 +119,6 @@ El usuario pidió que todo sea configurable **desde la primera ejecución**, con
 ```sh
 cargo build && cargo clippy --all-targets && cargo test
 cargo run -- query comprimir carpeta        # búsqueda sin interfaz
-cargo run -- eval                           # precisión sobre eval/preguntas.toml
+cargo run -- eval                           # precisión sobre eval/questions.toml
 cargo run -- init zsh                       # revisar el widget generado
 ```

@@ -1,6 +1,6 @@
-//! Parser de páginas tldr (formato markdown de tldr-pages).
+//! Parser for tldr pages (the tldr-pages markdown format).
 //!
-//! Sin dependencias externas para poder probarlo con `rustc --test`.
+//! No external dependencies, so it can be tested with `rustc --test`.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
@@ -15,7 +15,7 @@ pub struct Example {
     pub cmd: String,
 }
 
-/// Ubicación de una página dentro del zip de tldr.
+/// Location of a page inside the tldr zip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PagePath {
     /// `en`, `es`, `pt_BR`…
@@ -25,7 +25,7 @@ pub struct PagePath {
     pub name: String,
 }
 
-/// Interpreta rutas como `pages/common/tar.md` o `tldr/pages.es/linux/ss.md`.
+/// Interprets paths such as `pages/common/tar.md` o `tldr/pages.es/linux/ss.md`.
 pub fn page_path(path: &str) -> Option<PagePath> {
     let comps: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     let i = comps
@@ -60,7 +60,7 @@ pub fn parse(md: &str) -> Page {
             }
         } else if let Some(t) = line.strip_prefix('>') {
             let t = t.trim();
-            // la línea "More information: <url>" (o su traducción) no aporta a la búsqueda
+            // the "More information: <url>" line (or its translation) adds nothing to search
             if !t.contains("://") && !t.is_empty() {
                 summary.push(t.to_string());
             }
@@ -85,7 +85,7 @@ pub fn parse(md: &str) -> Page {
 
 fn clean_desc(s: &str) -> String {
     let s = s.trim().trim_end_matches(':').trim();
-    // tldr marca algunas palabras como [l]ist; quitamos los corchetes de una letra
+    // tldr marks some words like [l]ist; strip the single-letter brackets
     let mut out = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;

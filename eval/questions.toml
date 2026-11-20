@@ -1,0 +1,172 @@
+# pistasho test set.
+#
+#   pistasho eval eval/questions.toml
+#
+# Each question lists the tools that count as a correct answer.
+# The questions themselves are real Spanish phrasings (that is the point:
+# Spanish question vs. English descriptions). The goal is ~100 questions,
+# covering what you actually use.
+#
+# Note: the phase 1 fuzzy searcher requires every word to match, so full
+# sentences will score low. That is the baseline against which we will
+# measure BM25 + embeddings (phase 2) and Laya (phase 3).
+
+[[q]]
+question = "ver qué puertos están escuchando"
+tools = ["ss", "netstat", "lsof"]
+
+[[q]]
+question = "qué proceso usa el puerto 8080"
+tools = ["lsof", "ss", "fuser"]
+
+[[q]]
+question = "comprimir una carpeta en tar.gz"
+tools = ["tar"]
+
+[[q]]
+question = "extraer un archivo zip"
+tools = ["unzip", "7z", "bsdtar"]
+
+[[q]]
+question = "buscar texto dentro de archivos"
+tools = ["grep", "rg", "ag"]
+
+[[q]]
+question = "buscar archivos por nombre"
+tools = ["find", "fd", "locate"]
+
+[[q]]
+question = "ver cuánto espacio ocupa cada carpeta"
+tools = ["du", "ncdu", "dust"]
+
+[[q]]
+question = "espacio libre en disco"
+tools = ["df", "duf"]
+
+[[q]]
+question = "matar un proceso por nombre"
+tools = ["pkill", "killall"]
+
+[[q]]
+question = "ver procesos que más memoria usan"
+tools = ["ps", "top", "htop", "btop"]
+
+[[q]]
+question = "copiar archivos a otro servidor por ssh"
+tools = ["scp", "rsync", "sftp"]
+
+[[q]]
+question = "sincronizar dos carpetas"
+tools = ["rsync"]
+
+[[q]]
+question = "cambiar el dueño de un archivo"
+tools = ["chown"]
+
+[[q]]
+question = "dar permisos de ejecución a un script"
+tools = ["chmod"]
+
+[[q]]
+question = "ver logs de un servicio"
+tools = ["journalctl"]
+
+[[q]]
+question = "reiniciar un servicio"
+tools = ["systemctl"]
+
+[[q]]
+question = "listar discos y particiones"
+tools = ["lsblk", "fdisk", "blkid"]
+
+[[q]]
+question = "formatear una usb en ext4"
+tools = ["mkfs.ext4", "mkfs"]
+
+[[q]]
+question = "montar una partición"
+tools = ["mount"]
+
+[[q]]
+question = "ver mi ip"
+tools = ["ip", "ifconfig", "hostname"]
+
+[[q]]
+question = "descargar un archivo de internet"
+tools = ["curl", "wget", "aria2c"]
+
+[[q]]
+question = "hacer una petición POST con json"
+tools = ["curl", "http", "xh"]
+
+[[q]]
+question = "ver las últimas líneas de un log en vivo"
+tools = ["tail", "less", "journalctl"]
+
+[[q]]
+question = "contar líneas de un archivo"
+tools = ["wc"]
+
+[[q]]
+question = "reemplazar texto en un archivo"
+tools = ["sed", "sd", "perl"]
+
+[[q]]
+question = "ordenar y quitar duplicados"
+tools = ["sort", "uniq"]
+
+[[q]]
+question = "ver diferencias entre dos archivos"
+tools = ["diff", "delta", "colordiff"]
+
+[[q]]
+question = "formatear json bonito"
+tools = ["jq", "python", "fx"]
+
+[[q]]
+question = "crear un enlace simbólico"
+tools = ["ln"]
+
+[[q]]
+question = "generar una llave ssh"
+tools = ["ssh-keygen"]
+
+[[q]]
+question = "copiar mi llave ssh al servidor"
+tools = ["ssh-copy-id"]
+
+[[q]]
+question = "ver contenedores docker corriendo"
+tools = ["docker", "docker-ps", "docker-container"]
+
+[[q]]
+question = "borrar imágenes de docker que no se usan"
+tools = ["docker", "docker-image", "docker-system"]
+
+[[q]]
+question = "deshacer el último commit sin perder cambios"
+tools = ["git", "git-reset"]
+
+[[q]]
+question = "ver el historial de git en una línea"
+tools = ["git", "git-log"]
+
+[[q]]
+question = "programar una tarea periódica"
+tools = ["crontab", "systemd-run", "at"]
+
+[[q]]
+question = "ver variables de entorno"
+tools = ["env", "printenv", "export"]
+
+[[q]]
+question = "renombrar muchos archivos a la vez"
+tools = ["rename", "mmv", "perl-rename"]
+
+[[q]]
+question = "convertir un video a mp4"
+tools = ["ffmpeg"]
+
+[[q]]
+question = "ver información del cpu"
+tools = ["lscpu", "nproc"]

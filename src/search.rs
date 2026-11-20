@@ -1,4 +1,4 @@
-//! Búsqueda difusa con nucleo-matcher y ranking.
+//! Fuzzy search with nucleo-matcher, plus ranking.
 
 use crate::index::{Entry, Source};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
@@ -7,7 +7,7 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 pub struct Searcher {
     matcher: Matcher,
     buf: Vec<char>,
-    /// Texto de búsqueda precalculado por entrada.
+    /// Precomputed search text per entry.
     hay: Vec<String>,
 }
 
@@ -24,7 +24,7 @@ impl Searcher {
         }
     }
 
-    /// Devuelve índices de `entries` ordenados del mejor al peor, como máximo `limit`.
+    /// Returns indices into `entries` ordered best to worst, at most `limit`.
     pub fn rank(&mut self, entries: &[Entry], query: &str, limit: usize) -> Vec<usize> {
         let query = query.trim();
         if query.is_empty() {
@@ -47,8 +47,8 @@ impl Searcher {
     }
 }
 
-/// Ajustes sobre la puntuación difusa: lo tuyo primero, lo que usas seguido sube,
-/// y si la primera palabra es el nombre exacto de la herramienta, gana.
+/// Adjustments on top of the fuzzy score: your own entries first, frequently used ones rise,
+/// and if the first word is the exact tool name, it wins.
 fn bonus(e: &Entry, first_word: &str) -> i64 {
     let mut b = 0;
     if e.tool.eq_ignore_ascii_case(first_word) {
@@ -62,7 +62,7 @@ fn bonus(e: &Entry, first_word: &str) -> i64 {
     b
 }
 
-/// Sin texto: tus atajos, luego el historial más reciente, luego tldr.
+/// With no text: your cheats, then the most recent history, then tldr.
 fn empty_query_order(entries: &[Entry], limit: usize) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..entries.len()).collect();
     idx.sort_by_key(|&i| match entries[i].source {

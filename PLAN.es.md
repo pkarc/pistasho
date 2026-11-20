@@ -39,7 +39,7 @@ El código nunca se compiló con sus dependencias.
 
 ### [ ] 1.4 Línea base de `eval` · S
 - Correr `pistasho eval` y guardar top-1 / top-3 en `docs/eval.md`.
-- Ampliar `eval/preguntas.toml` hacia ~100 preguntas con comandos que el usuario realmente usa (puede ser una tarea continua).
+- Ampliar `eval/questions.toml` hacia ~100 preguntas con comandos que el usuario realmente usa (puede ser una tarea continua).
 
 **Lista cuando:** `docs/eval.md` tiene la línea base de la fase 1 con fecha.
 
@@ -60,9 +60,9 @@ El código nunca se compiló con sus dependencias.
 - Subcomando `ask "<pregunta>"` que devuelve el mejor candidato por BM25 (`bm25(entries_fts)`), con `--json` para depurar (candidatos y puntuaciones).
 - Quitar palabras vacías en español e inglés de la pregunta antes de buscar ("qué", "cómo", "de", "the"…).
 - Subir el peso de las entradas `mío` y de las del historial que se usan seguido.
-- `eval` acepta `--modo fuzzy|bm25` para comparar.
+- `eval` acepta `--mode fuzzy|bm25` para comparar.
 
-**Lista cuando:** `pistasho eval --modo bm25` supera claramente a la línea base de la 1.4 y el resultado está anotado en `docs/eval.md`.
+**Lista cuando:** `pistasho eval --mode bm25` supera claramente a la línea base de la 1.4 y el resultado está anotado en `docs/eval.md`.
 
 ### [ ] 2.3 Widget del modo pregunta (`Ctrl-Space`) · M
 - `init zsh` agrega el widget `_pistasho_ask` en `keys.ask`.
@@ -116,7 +116,7 @@ El código nunca se compiló con sus dependencias.
 - **2.9b:** precalcular los vectores de todas las entradas en `update` y guardarlos en SQLite como blob. Al preguntar, calcular el vector de la pregunta, similitud coseno (con fuerza bruta sobre unos 30k vectores basta), y fusionar con BM25 por rangos (RRF, k=60).
 - Opción `search.embeddings = true|false` en la configuración y en el asistente.
 
-**Lista cuando:** `eval --modo hybrid` supera a `bm25`, la latencia de `ask` sigue en menos de ~150 ms, y está anotado en `docs/eval.md`. Si no mejora, dejarlo apagado por defecto y anotar por qué.
+**Lista cuando:** `eval --mode hybrid` supera a `bm25`, la latencia de `ask` sigue en menos de ~150 ms, y está anotado en `docs/eval.md`. Si no mejora, dejarlo apagado por defecto y anotar por qué.
 
 ### [ ] 2.10 Cierre de fase 2 · S
 - `eval` final de la fase, README actualizado y un GIF real con `vhs` del modo pregunta.
@@ -131,7 +131,7 @@ El código nunca se compiló con sus dependencias.
 - Trait `Decide` con `choice(estado, opciones) -> (índice, prob)` y `noul(estado, pregunta) -> prob`.
 - Cliente HTTP para la API compatible con Jev, que sirve para Jev y para laya-serve; `decide.endpoint`, `decide.api_key_env`.
 - `ask` usa choice entre los 10 mejores candidatos + "ninguno".
-- `eval --modo hybrid+decide`.
+- `eval --mode hybrid+decide`.
 
 **Lista cuando:** funciona contra laya-serve (por ejemplo en el Proxmox del usuario) y está medido en `eval`.
 
@@ -204,4 +204,4 @@ El código nunca se compiló con sus dependencias.
 <!-- Anota aquí decisiones o cambios de plan, con fecha. -->
 
 - 2026-11-19 · 1.1: compiló a la primera con las versiones fijadas, sin errores de API ni cambios de versión. Único ajuste: warning `unnecessary_sort_by` de clippy en `history.rs`. Se versionó `Cargo.lock` (es un binario). CI en verde. `cargo install` deja el binario en `~/.cargo/bin`, que no estaba en el `PATH`.
-- 2026-11-19 · Idioma: el proyecto ahora va en inglés por defecto (README, CLAUDE.md, PLAN.md). Las versiones en español se conservan como `README.es.md`, `CLAUDE.es.md` y `PLAN.es.md` y deben mantenerse alineadas. Las cadenas de la interfaz y los comentarios del código siguen en español; migración pendiente.
+- 2026-11-19 · Idioma: el proyecto ahora va en inglés por defecto (README, CLAUDE.md, PLAN.md). Las versiones en español se conservan como `README.es.md`, `CLAUDE.es.md` y `PLAN.es.md` y deben mantenerse alineadas. Las cadenas de la interfaz y los comentarios del código se migraron al inglés en el mismo cambio. La interfaz en español sigue disponible con `language = "es"` / `PISTASHO_LANG=es` (`src/i18n.rs`); toda cadena nueva de cara al usuario necesita ambos idiomas. El archivo de eval ahora es `eval/questions.toml` con las claves `question` / `tools` (las preguntas se quedan en español a propósito). Los `languages` por defecto ahora son `["en", "es"]`.
