@@ -32,7 +32,7 @@ src/
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
-  search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40)
+  search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40); busca por prefijos (solo reevalúa lo que ya coincidía), en hilos, y solo en los primeros 150 caracteres de `alt`
   tui.rs           ratatui en /dev/tty: lista de candidatos (modos alternativas / explorar) + relleno de marcadores, en línea debajo del prompt. Hoy sigue siendo el buscador de `Ctrl-G`; refactor en la tarea 2.3b
   shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Hoy aún genera el widget de `Ctrl-G`; se reemplaza en la tarea 2.3a
   eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml
@@ -126,5 +126,6 @@ El usuario pidió que todo sea configurable **desde la primera ejecución**, con
 cargo build && cargo clippy --all-targets && cargo test
 cargo run -- query comprimir carpeta        # búsqueda sin interfaz
 cargo run -- eval                           # precisión sobre eval/questions.toml
+cargo run --release -- query --timing tar czf   # tiempos de apertura y por tecla (medir siempre en release)
 cargo run -- init zsh                       # revisar el widget generado
 ```

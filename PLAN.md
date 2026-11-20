@@ -29,13 +29,13 @@ El código nunca se compiló con sus dependencias.
 
 **Lista cuando:** todo lo anterior funciona en la máquina del usuario y los problemas encontrados están corregidos.
 
-### [ ] 1.3 Rendimiento base · S
+### [x] 1.3 Rendimiento base · S
 - Medir el tiempo desde `Ctrl-G` hasta ver resultados (cargar `index.json` + historial) y el tiempo por tecla con ~30k entradas.
 - Si la carga pasa de ~150 ms: cambiar el índice a un formato binario (bincode / postcard) o adelantar la parte de SQLite de la tarea 2.1.
 
 **Lista cuando:** hay números anotados en `docs/eval.md`, la apertura queda en menos de ~150 ms y cada tecla en menos de ~30 ms.
 
-### [ ] 1.4 Línea base de `eval` · S
+### [x] 1.4 Línea base de `eval` · S
 - Correr `pistasho eval` y guardar top-1 / top-3 en `docs/eval.md`.
 - Ampliar `eval/questions.toml` hacia ~100 preguntas con comandos que el usuario realmente usa (puede ser una tarea continua).
 
@@ -228,3 +228,4 @@ El código nunca se compiló con sus dependencias.
 - 2026-11-19 · 5.1 adelantada: el widget de zsh ahora usa `Viewport::Inline` (`ui.height`, por defecto `40%`, o `--height`; se pregunta en `pistasho config`). El popup de tmux (`--send-to`) mantiene la pantalla completa. ratatui/crossterm leen la posición del cursor por stdout, que en el widget es el pipe de `$(...)` (el primer intento falló tras 2 s de espera), así que `tui::run` redirige stdout al tty mientras corre. Verificado en servidores tmux aislados con el prompt arriba y en la última fila: elegir, relleno, cancelar, cursor al final del buffer. Además: la descripción de `Cargo.toml` ahora está en inglés y `libc` es dependencia directa.
 - 2026-11-19 · ADR 0001 aplicado: Ctrl-Space única entrada; buscador → lista de alternativas. La tarea 2.3 se divide en 2.3a–d; 5.1 absorbida por 2.3b (el viewport en línea ya existe); 2.2 debe devolver N candidatos; 1.2 ya no pule el widget de `Ctrl-G`. Ver `docs/adr/0001-question-mode-single-entry.md`. El README sigue describiendo `Ctrl-G` porque es lo que funciona hoy; actualizarlo en 2.3a.
 - 2026-11-19 · Idioma, revisado: se corrige la nota anterior. Código, comentarios y README (en dos versiones) en inglés; la herramienta en inglés por defecto con español elegible (`language = "es"`, `PISTASHO_LANG`) o detectado (`language = "auto"`, desde `LC_ALL` / `LC_MESSAGES` / `LANG`). Las decisiones, el plan y el contexto del agente se mantienen solo en español: `CLAUDE.md`, `PLAN.md` y `docs/adr/` son un único archivo en español y desaparecen los gemelos en inglés (`CLAUDE.es.md`, `PLAN.es.md` y el ADR en inglés ya no existen).
+- 2026-11-19 · 1.3 y 1.4 hechas (números en `docs/eval.md`). Apertura 67 ms (meta < 150), así que el índice se queda en JSON. Cada tecla estaba en ~175 ms (meta < 30): ahora ~20–28 ms de media (máx. 46) con búsqueda incremental por prefijos, hilos y `alt` recortado a 150 caracteres (`ALT_SEARCH_CHARS`), medido con `eval` para no perder precisión. Línea base de la fase 1: top-1 18%, top-3 28%. Se añadió `query --timing`. Pendiente de 1.4 como tarea continua: ampliar `eval/questions.toml` hacia ~100 preguntas. Ojo: los hilos dependen de los núcleos (medido en 16).

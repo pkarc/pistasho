@@ -50,6 +50,9 @@ enum Command {
         query: Vec<String>,
         #[arg(short = 'n', long, default_value_t = 10)]
         limit: usize,
+        /// Print timings to stderr: index load, searcher build and per-keystroke ranking
+        #[arg(long)]
+        timing: bool,
     },
     /// Downloads the tldr pages and rebuilds the index
     Update,
@@ -134,11 +137,19 @@ fn run() -> Result<ExitCode> {
                 }
             }
         }
-        Command::Query { query, limit } => {
+        Command::Query { query, limit, timing } => {
             let cfg = Config::load()?;
+            let t0 = std::time::Instant::now();
             let idx = Index::load(&cfg)?;
+            let t_load = t0.elapsed();
+            let t1 = std::time::Instant::now();
             let mut s = search::Searcher::new(&idx.entries);
-            for i in s.rank(&idx.entries, &query.join(" "), limit) {
+            let t_build = t1.elapsed();
+            let text = query.join(" ");
+            if timing {
+                report_timing(&mut s, &idx.entries, &text, t_load, t_build);
+            }
+            for i in s.rank(&idx.entries, &text, limit) {
                 let e = &idx.entries[i];
                 println!("{:<5} {}\n      {}", e.source.tag(), e.cmd, e.desc);
             }
@@ -197,6 +208,41 @@ fn run() -> Result<ExitCode> {
             eval::run(&file, &idx.entries)?;
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+/// Diagnostic for `query --timing`: what the user waits for when opening the searcher
+/// (index load + searcher build) and on each keystroke (one `rank` per typed prefix, the
+/// same call the interface makes, with its 300-result limit).
+fn report_timing(
+    s: &mut search::Searcher,
+    entries: &[index::Entry],
+    text: &str,
+    load: std::time::Duration,
+    build: std::time::Duration,
+) {
+    let mut per_key = Vec::new();
+    let mut prefix = String::new();
+    for c in text.chars() {
+        prefix.push(c);
+        let t = std::time::Instant::now();
+        let _ = s.rank(entries, &prefix, 300);
+        per_key.push(t.elapsed());
+    }
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    eprintln!("entries:        {}", entries.len());
+    eprintln!("index load:     {:.1} ms", ms(load));
+    eprintln!("searcher build: {:.1} ms", ms(build));
+    eprintln!("open total:     {:.1} ms", ms(load + build));
+    if !per_key.is_empty() {
+        let max = per_key.iter().map(|d| ms(*d)).fold(0.0, f64::max);
+        let avg = per_key.iter().map(|d| ms(*d)).sum::<f64>() / per_key.len() as f64;
+        eprintln!(
+            "per keystroke:  avg {avg:.1} ms, max {max:.1} ms ({} keys)",
+            per_key.len()
+        );
+        let list: Vec<String> = per_key.iter().map(|d| format!("{:.0}", ms(*d))).collect();
+        eprintln!("keystroke ms:   {}", list.join(" "));
     }
 }
 

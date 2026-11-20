@@ -46,7 +46,7 @@ Etiquetas de origen: `tldr` (páginas de tldr), `mío` (tu cheatsheet), `hist` (
 
 ```sh
 pistasho search [-q texto] [--send-to PANE] [--no-fill]   # interfaz; imprime el comando
-pistasho query texto de búsqueda [-n 10]                    # sin interfaz, para pruebas
+pistasho query texto de búsqueda [-n 10] [--timing]        # sin interfaz, para pruebas; --timing imprime tiempos
 pistasho update                                             # descarga tldr y reconstruye el índice
 pistasho add 'fuser -k {{puerto}}/tcp' -d 'Matar el proceso de un puerto' -t red
 pistasho init zsh | tmux

@@ -46,7 +46,7 @@ Source labels: `tldr` (tldr pages), `mine` (your cheatsheet), `hist` (your zsh h
 
 ```sh
 pistasho search [-q text] [--send-to PANE] [--no-fill]   # interface; prints the command
-pistasho query search text [-n 10]                        # no interface, for testing
+pistasho query search text [-n 10] [--timing]            # no interface, for testing; --timing prints timings
 pistasho update                                           # downloads tldr and rebuilds the index
 pistasho add 'fuser -k {{port}}/tcp' -d 'Kill the process on a port' -t net
 pistasho init zsh | tmux
