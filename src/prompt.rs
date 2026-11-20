@@ -160,6 +160,16 @@ pub fn read_question(initial: &str) -> Result<Answer> {
     Ok(answer)
 }
 
+/// Writes a line of text on the terminal, starting on a new line below the prompt. For the
+/// moments when pistasho hands the terminal to another program (the package manager) and wants
+/// to say what is about to run.
+pub fn say(text: &str) -> Result<()> {
+    let mut out = tty()?;
+    write!(out, "\r\n{text}\r\n")?;
+    out.flush()?;
+    Ok(())
+}
+
 /// Shows a one-line message on the current line and waits for a key. For the tmux popup, which
 /// closes when the process ends and would otherwise swallow the message.
 pub fn notice(message: &str) -> Result<()> {

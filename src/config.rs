@@ -25,6 +25,7 @@ pub struct Config {
     pub tldr_url: String,
     pub keys: Keys,
     pub ui: Ui,
+    pub install: Install,
     /// Decision model (phase 3). Not used yet.
     pub decide: Decide,
     /// LLM fallback (phase 4). Not used yet.
@@ -54,6 +55,21 @@ impl Default for Ui {
         Self {
             height: DEFAULT_HEIGHT.into(),
         }
+    }
+}
+
+/// When a command needs a program that is not installed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Install {
+    /// Offer to install it (with the exact command shown and an explicit key to confirm).
+    /// There is no setting that installs without asking.
+    pub offer: bool,
+}
+
+impl Default for Install {
+    fn default() -> Self {
+        Self { offer: true }
     }
 }
 
@@ -130,6 +146,7 @@ impl Default for Config {
             tldr_url: TLDR_URL.into(),
             keys: Keys::default(),
             ui: Ui::default(),
+            install: Install::default(),
             decide: Decide::default(),
             llm: Llm::default(),
         }
@@ -384,6 +401,16 @@ pub fn wizard() -> Result<(Config, bool)> {
     } else {
         DEFAULT_HEIGHT.into()
     };
+
+    let offer = ask(
+        &mut stdin,
+        tr(
+            "Offer to install programs that a command needs and you do not have? (y/n; it always asks first)",
+            "¿Ofrecer instalar los programas que un comando necesita y no tienes? (s/n; siempre pregunta antes)",
+        ),
+        if cfg.install.offer { yes } else { "n" },
+    )?;
+    cfg.install.offer = !offer.to_lowercase().starts_with('n');
 
     cfg.decide.provider = choose(
         &mut stdin,

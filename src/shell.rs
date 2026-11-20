@@ -3,7 +3,8 @@
 use crate::config::Config;
 
 /// The zsh widget behind `Ctrl-Space`: a question on the prompt line, the best command left in
-/// `BUFFER`. Never runs it. `pistasho ask --format zsh` prints `command NUL message NUL question`
+/// `BUFFER`. Never runs it. `pistasho ask --format zsh` prints `command NUL message NUL question
+/// NUL printed`
 /// (zsh keeps NUL bytes in `$(...)`, which is what lets a multiline command travel safely).
 ///
 /// The widget remembers the last question and the command it put on the prompt. If `Ctrl-Space`
@@ -15,6 +16,16 @@ pub fn zsh(cfg: &Config) -> String {
     format!(
         r#"# pistasho · zsh integration
 # In ~/.zshrc:  eval "$(pistasho init zsh)"
+
+# After a package manager wrote on the terminal: `zle reset-prompt` moves up as many lines as the
+# prompt has beyond the first before it redraws, which would overwrite the last lines of that
+# output. Leave that many blank lines for it to land on.
+_pistasho_room() {{
+  local -a rows
+  # through an array: for a one-line prompt `${{#...}}` of a scalar would count characters
+  rows=("${{(@f)${{(%)PS1}}}}")
+  (( ${{#rows}} > 1 )) && repeat $(( ${{#rows}} - 1 )) print > /dev/tty
+}}
 
 _pistasho_ask() {{
   local out ret
@@ -32,11 +43,14 @@ _pistasho_ask() {{
     CURSOR=${{#BUFFER}}
     _PISTASHO_LAST_CMD="$BUFFER"
     _PISTASHO_LAST_Q="${{parts[3]:-}}"
+    [[ "${{parts[4]:-}}" == 1 ]] && _pistasho_room
     zle reset-prompt
     [[ -n "${{parts[2]}}" ]] && zle -M "${{parts[2]}}"
   else
+    (( ret == 5 )) && _pistasho_room
     zle reset-prompt
-    (( ret == 1 )) && [[ -n "$out" ]] && zle -M "$out"
+    # 1: nothing matched; 5: an install failed
+    (( ret == 1 || ret == 5 )) && [[ -n "$out" ]] && zle -M "$out"
   fi
   return 0
 }}
@@ -117,6 +131,12 @@ mod tests {
         assert!(out.contains("ask --alternatives --current \"$BUFFER\""));
         assert!(out.contains("\"$BUFFER\" == \"$_PISTASHO_LAST_CMD\""));
         assert!(out.contains("add-zle-hook-widget zle-line-finish _pistasho_forget"));
+        // `zle -I` followed by `zle reset-prompt` draws the prompt over the package manager's
+        // output (measured in tmux); plain `reset-prompt` is what redraws correctly after it
+        assert!(!out.contains("zle -I"));
+        // after an install, blank lines for a multi-line prompt to be redrawn onto
+        assert!(out.contains("_pistasho_room"));
+        assert!(out.contains("${parts[4]:-}"));
         assert!(!out.contains("_pistasho_search"), "the Ctrl-G widget is gone");
         // the widget must pass HISTFILE along: it is a plain zsh variable, not exported
         assert!(out.contains("HISTFILE=\"$HISTFILE\""));

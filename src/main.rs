@@ -299,7 +299,7 @@ fn run() -> Result<ExitCode> {
                     None => Ok(ExitCode::from(130)),
                     Some(cmd) => {
                         let (cmd, message) = adapt_result(cmd, String::new());
-                        emit(format, &cmd, &message, "");
+                        emit(format, &cmd, &message, "", false);
                         Ok(ExitCode::SUCCESS)
                     }
                 };
@@ -388,11 +388,13 @@ fn report_timing(
     }
 }
 
-/// What the widget gets on stdout with `--format zsh`: `command NUL message NUL question`.
-/// The question travels back so the widget can reopen the alternatives for it.
-fn emit(format: OutputFormat, command: &str, message: &str, question: &str) {
+/// What the widget gets on stdout with `--format zsh`: `command NUL message NUL question NUL
+/// printed`. The question travels back so the widget can reopen the alternatives for it, and
+/// `printed` is `1` when something other than pistasho's own interface wrote on the terminal
+/// (the package manager), which tells zle to redraw the prompt from the line it is now on.
+fn emit(format: OutputFormat, command: &str, message: &str, question: &str, printed: bool) {
     match format {
-        OutputFormat::Zsh => print!("{command}\0{message}\0{question}"),
+        OutputFormat::Zsh => print!("{command}\0{message}\0{question}\0{}", u8::from(printed)),
         OutputFormat::Plain => println!("{command}"),
     }
 }
@@ -410,15 +412,94 @@ fn no_match(format: OutputFormat) -> ExitCode {
     ExitCode::from(1)
 }
 
-/// What `Ctrl-Space` runs: read the question on the prompt line, resolve it, ask for the
-/// placeholders if the command has any, and hand the result to the widget.
+/// The install ran and failed (or did not leave the program in place). The output is the message,
+/// and the terminal has been written to, so the widget redraws from the current line.
+const EXIT_INSTALL_FAILED: u8 = 5;
+
+/// What came of an answer that needs programs that are not installed.
+enum Install {
+    /// Nothing to install, offers are off, or no package provides it: carry on with the command
+    /// as it is (the message under the prompt warns about what is missing).
+    NotNeeded,
+    /// Installed just now. The text says so for the message under the prompt.
+    Done(String),
+    /// The user declined in the box.
+    Cancelled,
+    /// The install ran and failed, or the program is still not there afterwards.
+    Failed(String),
+}
+
+/// If the command needs programs that are not installed and a package provides them, shows the
+/// confirmation box (`[y]` install, `[esc]` cancel) and, only on an explicit yes, runs the
+/// install in the foreground on the terminal. Then checks again that the programs are there.
+///
+/// This is the one thing pistasho runs by itself: always after confirmation, with the exact
+/// command on screen, and never through a shell.
+fn offer_install(cfg: &Config, command: &str) -> Result<Install> {
+    if !cfg.install.offer {
+        return Ok(Install::NotNeeded);
+    }
+    let still_missing = || system::missing_binaries(&packages::adapt(command).command);
+    let missing = still_missing();
+    if missing.is_empty() {
+        return Ok(Install::NotNeeded);
+    }
+    let Some(plan) = packages::plan_install_for(&missing) else {
+        return Ok(Install::NotNeeded);
+    };
+    let system_line = match packages::detect_os() {
+        Some(os) if !os.pretty_name.is_empty() => format!("{} · {}", os.pretty_name, plan.manager.name()),
+        _ => plan.manager.name().to_string(),
+    };
+    let info = tui::InstallBox {
+        command: packages::adapt(command).command,
+        system: system_line,
+        install: plan.display(),
+        missing: missing.clone(),
+        // 2.7: an alternative made of programs that are already installed
+        alternative: false,
+    };
+    match tui::confirm_install(&info)? {
+        tui::InstallChoice::Cancel => return Ok(Install::Cancelled),
+        tui::InstallChoice::Alternative => return Ok(Install::NotNeeded),
+        tui::InstallChoice::Install => {}
+    }
+
+    prompt::say(&format!("$ {}", plan.display()))?;
+    let failed = tr("✗ installation failed", "✗ falló la instalación");
+    match packages::run_install(&plan) {
+        Err(e) => return Ok(Install::Failed(format!("{failed}: {e}"))),
+        Ok(false) => return Ok(Install::Failed(failed.to_string())),
+        Ok(true) => {}
+    }
+    let left = still_missing();
+    if !left.is_empty() {
+        return Ok(Install::Failed(format!(
+            "✗ {} {}",
+            left.join(", "),
+            tr(
+                "is still not found after installing",
+                "sigue sin aparecer tras instalar"
+            )
+        )));
+    }
+    Ok(Install::Done(format!(
+        "✓ {} {}",
+        plan.packages.join(", "),
+        tr("installed", "instalado")
+    )))
+}
+
+/// What `Ctrl-Space` runs: read the question on the prompt line, resolve it, offer to install
+/// what it needs, ask for the placeholders if the command has any, and hand the result to the
+/// widget.
 ///
 /// With `send_to` (the tmux popup) there is no prompt to put the answer on: the answer is shown
 /// as the candidate list, best one selected (`⏎ send · ↑↓ see more`), and the pick is typed into
 /// that pane without Enter.
 ///
 /// Exit codes: 0 = a command is in the output (or was sent), 1 = nothing matched (the output is
-/// the message), 130 = cancelled.
+/// the message), 5 = the install failed (the output is the message), 130 = cancelled.
 fn ask_on_prompt(
     cfg: &Config,
     initial: &str,
@@ -426,6 +507,8 @@ fn ask_on_prompt(
     send_to: Option<&str>,
 ) -> Result<ExitCode> {
     let height = search_height(cfg, None, false);
+    let mut printed = false;
+    let mut installed_note = String::new();
     let (command, message, question) = match prompt::read_question(initial)? {
         prompt::Answer::Cancelled => return Ok(ExitCode::from(130)),
         prompt::Answer::Explore => match explore_list(cfg)? {
@@ -453,8 +536,32 @@ fn ask_on_prompt(
                 &best.entry.tool,
                 started.elapsed().as_millis(),
                 more,
-                &best.missing,
             );
+            if !best.missing.is_empty() {
+                match offer_install(cfg, &best.entry.cmd)? {
+                    Install::NotNeeded => {}
+                    Install::Cancelled => return Ok(ExitCode::from(130)),
+                    Install::Done(note) => {
+                        printed = true;
+                        if send_to.is_some() {
+                            // the popup closes with the process: let the output be read first
+                            prompt::notice(&note)?;
+                        }
+                        installed_note = note;
+                    }
+                    Install::Failed(message) => {
+                        if send_to.is_some() {
+                            prompt::notice(&message)?;
+                            return Ok(ExitCode::from(1));
+                        }
+                        match format {
+                            OutputFormat::Zsh => print!("{message}"),
+                            OutputFormat::Plain => eprintln!("pistasho: {message}"),
+                        }
+                        return Ok(ExitCode::from(EXIT_INSTALL_FAILED));
+                    }
+                }
+            }
             let command = if send_to.is_some() {
                 match pick_alternative(cfg, &question, &best.entry.cmd, true)? {
                     None => return Ok(ExitCode::from(130)),
@@ -478,24 +585,40 @@ fn ask_on_prompt(
             (command, message, question)
         }
     };
-    let (command, message) = adapt_result(command, message);
+    let (command, mut message) = adapt_result(command, message);
+    if !installed_note.is_empty() {
+        message.push_str(" · ");
+        message.push_str(&installed_note);
+    }
     if let Some(pane) = send_to {
         send_to_tmux(pane, &command)?;
         return Ok(ExitCode::SUCCESS);
     }
-    emit(format, &command, &message, &question);
+    emit(format, &command, &message, &question, printed);
     Ok(ExitCode::SUCCESS)
 }
 
 /// Puts right the programs this machine has under another name (`fd` → `fdfind` on Debian) in
-/// the command about to be handed over, and says so in the message.
+/// the command about to be handed over, and says so in the message. Also warns about programs
+/// that are still not installed.
 fn adapt_result(command: String, mut message: String) -> (String, String) {
     let adapted = packages::adapt(&command);
-    for (asked, installed) in &adapted.renames {
+    let mut push = |text: String| {
         if !message.is_empty() {
             message.push_str(" · ");
         }
-        message.push_str(&format!("{asked} → {installed}"));
+        message.push_str(&text);
+    };
+    for (asked, installed) in &adapted.renames {
+        push(format!("{asked} → {installed}"));
+    }
+    let missing = system::missing_binaries(&adapted.command);
+    if !missing.is_empty() {
+        push(format!(
+            "⚠ {} {}",
+            missing.join(", "),
+            tr("not installed", "no instalado")
+        ));
     }
     (adapted.command, message)
 }
@@ -505,7 +628,7 @@ fn install_json(bin: &str) -> Option<serde_json::Value> {
     let plan = packages::plan_install(bin)?;
     Some(serde_json::json!({
         "manager": plan.manager.name(),
-        "package": plan.package,
+        "packages": plan.packages,
         "command": plan.display(),
     }))
 }
@@ -567,7 +690,7 @@ fn describe_program(bin: &str, manager: Option<packages::Manager>) -> String {
             "{} · {} {} · {}",
             tr("not installed", "no instalado"),
             tr("package", "paquete"),
-            plan.package,
+            plan.packages.join(" "),
             plan.display()
         ),
         None => format!(
@@ -597,15 +720,8 @@ fn explore_list(cfg: &Config) -> Result<Option<String>> {
 
 /// The line under the prompt after an answer: where it came from, how long it took, and how to
 /// get the other candidates.
-fn found_message(source: &str, tool: &str, ms: u128, more: usize, missing: &[String]) -> String {
+fn found_message(source: &str, tool: &str, ms: u128, more: usize) -> String {
     let mut message = format!("⚡ local · {source}/{tool} · {ms} ms");
-    if !missing.is_empty() {
-        message.push_str(&format!(
-            " · ⚠ {} {}",
-            missing.join(", "),
-            tr("not installed", "no instalado")
-        ));
-    }
     if more > 0 {
         let hint = match i18n::lang() {
             i18n::Lang::En => format!("Ctrl-Space: see {more} more"),
@@ -628,7 +744,7 @@ fn ask_alternatives(cfg: &Config, question: &str, current: &str, format: OutputF
         Some((cmd, origin)) => {
             let message = format!("✓ {} · {origin}", tr("replaced", "reemplazado"));
             let (cmd, message) = adapt_result(cmd, message);
-            emit(format, &cmd, &message, question);
+            emit(format, &cmd, &message, question, false);
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -710,23 +826,27 @@ mod tests {
     fn answer_message_points_to_the_other_candidates() {
         i18n::set(i18n::Lang::En);
         assert_eq!(
-            found_message("tldr", "fc", 12, 5, &[]),
+            found_message("tldr", "fc", 12, 5),
             "⚡ local · tldr/fc · 12 ms · Ctrl-Space: see 5 more"
         );
         // nothing else to show: no hint
         assert_eq!(
-            found_message("mine", "fuser", 3, 0, &[]),
+            found_message("mine", "fuser", 3, 0),
             "⚡ local · mine/fuser · 3 ms"
         );
     }
 
     #[test]
-    fn answer_message_warns_about_programs_that_are_not_installed() {
+    fn the_final_command_is_checked_for_programs_that_are_not_installed() {
         i18n::set(i18n::Lang::En);
-        assert_eq!(
-            found_message("tldr", "ncdu", 8, 4, &["ncdu".to_string()]),
-            "⚡ local · tldr/ncdu · 8 ms · ⚠ ncdu not installed · Ctrl-Space: see 4 more"
-        );
-        assert!(found_message("tldr", "x", 1, 0, &["a".into(), "b".into()]).contains("⚠ a, b not installed"));
+        let (command, message) = adapt_result("pistasho-no-such-program --x".into(), "⚡ local".into());
+        assert_eq!(command, "pistasho-no-such-program --x");
+        assert_eq!(message, "⚡ local · ⚠ pistasho-no-such-program not installed");
+        // everything in place: the message is left alone
+        let (_, message) = adapt_result("ls | sort".into(), "⚡ local".into());
+        assert_eq!(message, "⚡ local");
+        // with no message yet, the warning stands alone
+        let (_, message) = adapt_result("pistasho-no-such-program".into(), String::new());
+        assert_eq!(message, "⚠ pistasho-no-such-program not installed");
     }
 }

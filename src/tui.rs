@@ -180,19 +180,87 @@ impl Drop for Guard {
     }
 }
 
+/// The terminal while an interface is up: raw mode, and either the alternate screen or a
+/// viewport of a few lines below the prompt. `close` erases the viewport and gives the
+/// terminal back.
+struct Screen {
+    terminal: Terminal<CrosstermBackend<File>>,
+    tty_w: File,
+    /// Column of the prompt cursor, to put it back where zle expects it when we are done.
+    origin_col: u16,
+    inline: bool,
+    _guard: Guard,
+}
+
+impl Screen {
+    /// `Some(rows)` for a viewport of that many lines below the prompt, `None` for the
+    /// alternate screen.
+    fn open(inline_rows: Option<u16>) -> Result<Screen> {
+        let tty = File::options()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .context(tr("could not open /dev/tty", "no pude abrir /dev/tty"))?;
+        let mut tty_w = tty.try_clone()?;
+        enable_raw_mode()?;
+        let guard = Guard {
+            alternate_screen: inline_rows.is_none(),
+            saved_stdout: if inline_rows.is_some() {
+                redirect_stdout_to(&tty_w)
+            } else {
+                None
+            },
+        };
+        let mut origin_col = 0;
+        let terminal = match inline_rows {
+            None => {
+                execute!(tty_w, EnterAlternateScreen)?;
+                Terminal::new(CrosstermBackend::new(tty))?
+            }
+            Some(rows) => {
+                origin_col = position().map(|(col, _)| col).unwrap_or(0);
+                // start on the line below the prompt so the prompt itself stays visible
+                tty_w.write_all(b"\r\n")?;
+                tty_w.flush()?;
+                Terminal::with_options(
+                    CrosstermBackend::new(tty),
+                    TerminalOptions {
+                        viewport: Viewport::Inline(rows),
+                    },
+                )?
+            }
+        };
+        Ok(Screen {
+            terminal,
+            tty_w,
+            origin_col,
+            inline: inline_rows.is_some(),
+            _guard: guard,
+        })
+    }
+
+    fn close(mut self) -> Result<()> {
+        if self.inline {
+            // erase the viewport and return to the prompt line (just above it)
+            let prompt_row = self.terminal.get_frame().area().y.saturating_sub(1);
+            self.terminal.clear()?;
+            execute!(self.tty_w, MoveTo(self.origin_col, prompt_row))?;
+        }
+        self.terminal.show_cursor()?;
+        Ok(())
+    }
+}
+
+fn terminal_rows() -> u16 {
+    size().map(|(_, rows)| rows).unwrap_or(24)
+}
+
 pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
-    let tty = File::options()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .context(tr("could not open /dev/tty", "no pude abrir /dev/tty"))?;
-    let mut tty_w = tty.try_clone()?;
-    enable_raw_mode()?;
     let fill_only = opts
         .start_fill
         .as_deref()
         .is_some_and(placeholders::has_placeholders);
-    let term_rows = size().map(|(_, rows)| rows).unwrap_or(24);
+    let term_rows = terminal_rows();
     let compact = !matches!(opts.mode, ListMode::Search);
     let inline_rows = if fill_only {
         // input box + command preview + hint line, whatever `ui.height` says
@@ -202,34 +270,7 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
     } else {
         opts.height.rows(term_rows)
     };
-    let _guard = Guard {
-        alternate_screen: inline_rows.is_none(),
-        saved_stdout: if inline_rows.is_some() {
-            redirect_stdout_to(&tty_w)
-        } else {
-            None
-        },
-    };
-    // column of the prompt cursor, to put it back where zle expects it when we are done
-    let mut origin_col = 0;
-    let mut terminal = match inline_rows {
-        None => {
-            execute!(tty_w, EnterAlternateScreen)?;
-            Terminal::new(CrosstermBackend::new(tty))?
-        }
-        Some(rows) => {
-            origin_col = position().map(|(col, _)| col).unwrap_or(0);
-            // start on the line below the prompt so the prompt itself stays visible
-            tty_w.write_all(b"\r\n")?;
-            tty_w.flush()?;
-            Terminal::with_options(
-                CrosstermBackend::new(tty),
-                TerminalOptions {
-                    viewport: Viewport::Inline(rows),
-                },
-            )?
-        }
-    };
+    let mut screen = Screen::open(inline_rows)?;
 
     let mut app = App {
         entries,
@@ -251,7 +292,7 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
     app.refresh();
 
     loop {
-        terminal.draw(|f| draw(f, &mut app))?;
+        screen.terminal.draw(|f| draw(f, &mut app))?;
         let Event::Key(key) = event::read()? else { continue };
         if key.kind != KeyEventKind::Press {
             continue;
@@ -262,16 +303,124 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
             on_search_key(&mut app, key)
         };
         if let Some(outcome) = done {
-            if inline_rows.is_some() {
-                // erase the viewport and return to the prompt line (just above it)
-                let prompt_row = terminal.get_frame().area().y.saturating_sub(1);
-                terminal.clear()?;
-                execute!(tty_w, MoveTo(origin_col, prompt_row))?;
-            }
-            terminal.show_cursor()?;
+            screen.close()?;
             return Ok(outcome);
         }
     }
+}
+
+// ---------------------------------------------------------------- install confirmation
+
+/// What the confirmation box shows (ADR 0001, case 4 of the cases GIF).
+pub struct InstallBox {
+    /// The command the answer will put on the prompt.
+    pub command: String,
+    /// `Ubuntu 24.04.5 LTS · apt`
+    pub system: String,
+    /// `sudo apt install -y tree`: exactly what will run if the user says yes.
+    pub install: String,
+    /// The programs that are not installed.
+    pub missing: Vec<String>,
+    /// Whether `[a]`, an alternative that needs nothing new, is on offer.
+    pub alternative: bool,
+}
+
+pub enum InstallChoice {
+    Install,
+    Alternative,
+    Cancel,
+}
+
+/// Rows of the box: 2 borders, the warning, three fields, a blank line and the keys.
+const INSTALL_BOX_ROWS: u16 = 8;
+
+/// The key a user presses in the install box. `Enter` is deliberately not one of them: running
+/// a package manager needs an explicit `y` (or `s`, in Spanish), never a habit.
+fn install_key(key: KeyEvent, alternative: bool) -> Option<InstallChoice> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('y' | 's') if !ctrl => Some(InstallChoice::Install),
+        KeyCode::Char('a') if !ctrl && alternative => Some(InstallChoice::Alternative),
+        KeyCode::Esc | KeyCode::Char('n') if !ctrl => Some(InstallChoice::Cancel),
+        KeyCode::Char('c' | 'g') if ctrl => Some(InstallChoice::Cancel),
+        _ => None,
+    }
+}
+
+/// Shows what the answer needs and what would be installed, and waits for the user's choice.
+/// Nothing is run here.
+pub fn confirm_install(info: &InstallBox) -> Result<InstallChoice> {
+    let rows = INSTALL_BOX_ROWS.min(terminal_rows().saturating_sub(1).max(1));
+    let mut screen = Screen::open(Some(rows))?;
+    let choice = loop {
+        screen.terminal.draw(|f| draw_install(f, info))?;
+        let Event::Key(key) = event::read()? else { continue };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        if let Some(choice) = install_key(key, info.alternative) {
+            break choice;
+        }
+    };
+    screen.close()?;
+    Ok(choice)
+}
+
+fn draw_install(f: &mut Frame, info: &InstallBox) {
+    let b = Block::bordered()
+        .border_style(Style::default().fg(YEL))
+        .title(Span::styled(
+            format!(" {} ", tr("suggested installation", "instalación sugerida")),
+            Style::default().fg(YEL).add_modifier(Modifier::BOLD),
+        ));
+    let inner = b.inner(f.area());
+    f.render_widget(b, f.area());
+
+    let field = |label: &str, value: &str, color: Color| {
+        Line::from(vec![
+            Span::styled(format!(" {label:<10}"), Style::default().fg(GRAY)),
+            Span::styled(
+                value.to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ])
+    };
+    let key = |k: &str, text: &str, color: Color| {
+        vec![
+            Span::styled(
+                format!("[{k}]"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {text}   "), Style::default().fg(FG)),
+        ]
+    };
+    let mut keys = vec![Span::raw(" ")];
+    keys.extend(key(tr("y", "s"), tr("install", "instalar"), GREEN));
+    if info.alternative {
+        keys.extend(key(
+            "a",
+            tr("alternative without installing", "alternativa sin instalar"),
+            YEL,
+        ));
+    }
+    keys.extend(key("esc", tr("cancel", "cancelar"), GRAY));
+
+    let lines = vec![
+        Line::styled(
+            format!(
+                " ⚠ {} {}",
+                info.missing.join(", "),
+                tr("is not installed", "no está instalado")
+            ),
+            Style::default().fg(YEL).add_modifier(Modifier::BOLD),
+        ),
+        field(tr("Command:", "Comando:"), &info.command, FG),
+        field(tr("System:", "Sistema:"), &info.system, FG),
+        field(tr("Install:", "Instalar:"), &info.install, CYAN),
+        Line::raw(""),
+        Line::from(keys),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn ctrl(key: &KeyEvent, c: char) -> bool {
@@ -816,6 +965,59 @@ mod tests {
         let mut a = app(&e, alternatives(vec![1], Some(1)));
         let out = on_search_key(&mut a, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(out, Some(Outcome::Cancelled)));
+    }
+
+    fn press(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, mods)
+    }
+
+    fn choice(key: KeyEvent, alternative: bool) -> &'static str {
+        match install_key(key, alternative) {
+            Some(InstallChoice::Install) => "install",
+            Some(InstallChoice::Alternative) => "alternative",
+            Some(InstallChoice::Cancel) => "cancel",
+            None => "nothing",
+        }
+    }
+
+    /// Installing runs a package manager as root: only an explicit `y` / `s` does it.
+    #[test]
+    fn only_an_explicit_key_installs() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(choice(press(KeyCode::Char('y'), none), false), "install");
+        assert_eq!(choice(press(KeyCode::Char('s'), none), false), "install");
+        // Enter, Space, Tab and anything else do nothing: the box stays up
+        for code in [
+            KeyCode::Enter,
+            KeyCode::Char(' '),
+            KeyCode::Tab,
+            KeyCode::Char('x'),
+            KeyCode::Down,
+        ] {
+            assert_eq!(choice(press(code, none), true), "nothing", "{code:?}");
+        }
+        // Ctrl-Y is not Y
+        assert_eq!(
+            choice(press(KeyCode::Char('y'), KeyModifiers::CONTROL), false),
+            "nothing"
+        );
+    }
+
+    #[test]
+    fn the_box_can_be_cancelled_and_offers_the_alternative_only_when_there_is_one() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(choice(press(KeyCode::Esc, none), false), "cancel");
+        assert_eq!(choice(press(KeyCode::Char('n'), none), false), "cancel");
+        assert_eq!(
+            choice(press(KeyCode::Char('c'), KeyModifiers::CONTROL), false),
+            "cancel"
+        );
+        assert_eq!(choice(press(KeyCode::Char('a'), none), true), "alternative");
+        assert_eq!(
+            choice(press(KeyCode::Char('a'), none), false),
+            "nothing",
+            "no alternative to pick"
+        );
     }
 
     #[test]

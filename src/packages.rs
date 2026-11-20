@@ -113,9 +113,9 @@ impl Manager {
         })
     }
 
-    /// The command that installs `package`, as the argument list to run and show.
+    /// The command that installs `packages`, as the argument list to run and show.
     /// It asks for no further confirmation: pistasho has already asked, showing this command.
-    pub fn install_command(self, package: &str) -> Vec<String> {
+    pub fn install_command(self, packages: &[String]) -> Vec<String> {
         let args: &[&str] = match self {
             Manager::Apt => &["sudo", "apt", "install", "-y"],
             Manager::Pacman => &["sudo", "pacman", "-S", "--noconfirm"],
@@ -124,7 +124,7 @@ impl Manager {
         };
         args.iter()
             .map(|a| a.to_string())
-            .chain([package.to_string()])
+            .chain(packages.iter().cloned())
             .collect()
     }
 
@@ -271,11 +271,11 @@ fn adapt_with(cmd: &str, manager: Option<Manager>, installed: impl Fn(&str) -> b
     }
 }
 
-/// How to get a program that is not installed.
+/// How to get programs that are not installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallPlan {
     pub manager: Manager,
-    pub package: String,
+    pub packages: Vec<String>,
     /// The command to run, as arguments (`["sudo", "apt", "install", "-y", "ncdu"]`).
     pub command: Vec<String>,
 }
@@ -287,20 +287,73 @@ impl InstallPlan {
     }
 }
 
-/// The plan to install the package that provides `command`, if this machine has a package manager
-/// pistasho knows and that manager confirms the package exists.
-pub fn plan_install(command: &str) -> Option<InstallPlan> {
-    let manager = Manager::detect()?;
-    plan_install_with(command, manager, |pkg| exists(manager, pkg).unwrap_or(false))
+/// The plan to install the package that provides one program. See [`plan_install_for`].
+pub fn plan_install(program: &str) -> Option<InstallPlan> {
+    plan_install_for(&[program.to_string()])
 }
 
-fn plan_install_with(command: &str, manager: Manager, exists: impl Fn(&str) -> bool) -> Option<InstallPlan> {
-    let package = package_for(command, manager);
-    exists(&package).then(|| InstallPlan {
+/// The plan to install the packages that provide `programs`, if this machine has a package
+/// manager pistasho knows and that manager confirms every package exists. All or nothing: a plan
+/// that would leave one of the programs missing is not offered.
+pub fn plan_install_for(programs: &[String]) -> Option<InstallPlan> {
+    let manager = Manager::detect()?;
+    plan_install_for_with(programs, manager, |pkg| exists(manager, pkg).unwrap_or(false))
+}
+
+/// A package name as the managers write them. Anything else (a space, a `;`, a leading `-`)
+/// never reaches the install command: the names come from commands pistasho has read, and the
+/// command is run without a shell, but a name that is not a package is not a plan either.
+fn valid_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['-', '.', '+'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+-._".contains(c))
+}
+
+fn plan_install_for_with(
+    programs: &[String],
+    manager: Manager,
+    exists: impl Fn(&str) -> bool,
+) -> Option<InstallPlan> {
+    let mut packages: Vec<String> = Vec::new();
+    for program in programs {
+        let package = package_for(program, manager);
+        if !valid_package_name(&package) || !exists(&package) {
+            return None;
+        }
+        if !packages.contains(&package) {
+            packages.push(package);
+        }
+    }
+    (!packages.is_empty()).then(|| InstallPlan {
         manager,
-        command: manager.install_command(&package),
-        package,
+        command: manager.install_command(&packages),
+        packages,
     })
+}
+
+/// Runs the install in the foreground with the terminal as stdin, stdout and stderr, so the
+/// package manager's output shows and `sudo` can ask for the password. Returns whether it
+/// succeeded. This is the one thing pistasho runs by itself, and only after the user said yes
+/// to this exact command.
+///
+/// The terminal is `/dev/tty` and not the process's own stdout, which inside the zsh widget is
+/// the pipe that carries the result back.
+pub fn run_install(plan: &InstallPlan) -> Result<bool> {
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .context("could not open /dev/tty")?;
+    let status = Command::new(&plan.command[0])
+        .args(&plan.command[1..])
+        .stdin(Stdio::from(tty.try_clone()?))
+        .stdout(Stdio::from(tty.try_clone()?))
+        .stderr(Stdio::from(tty))
+        .status()
+        .with_context(|| format!("could not run {}", plan.command[0]))?;
+    Ok(status.success())
 }
 
 #[cfg(test)]
@@ -379,21 +432,27 @@ HOME_URL="https://www.ubuntu.com/"
 
     #[test]
     fn install_commands_never_ask_again() {
+        let ncdu = ["ncdu".to_string()];
         assert_eq!(
-            Manager::Apt.install_command("ncdu").join(" "),
+            Manager::Apt.install_command(&ncdu).join(" "),
             "sudo apt install -y ncdu"
         );
         assert_eq!(
-            Manager::Pacman.install_command("ncdu").join(" "),
+            Manager::Pacman.install_command(&ncdu).join(" "),
             "sudo pacman -S --noconfirm ncdu"
         );
         assert_eq!(
-            Manager::Dnf.install_command("ncdu").join(" "),
+            Manager::Dnf.install_command(&ncdu).join(" "),
             "sudo dnf install -y ncdu"
         );
         assert_eq!(
-            Manager::Zypper.install_command("ncdu").join(" "),
+            Manager::Zypper.install_command(&ncdu).join(" "),
             "sudo zypper --non-interactive install ncdu"
+        );
+        let two = ["tree".to_string(), "ncdu".to_string()];
+        assert_eq!(
+            Manager::Apt.install_command(&two).join(" "),
+            "sudo apt install -y tree ncdu"
         );
     }
 
@@ -536,26 +595,72 @@ HOME_URL="https://www.ubuntu.com/"
 
     // ---- the install plan
 
+    fn plan(programs: &[&str], manager: Manager, have: &'static [&'static str]) -> Option<InstallPlan> {
+        let programs: Vec<String> = programs.iter().map(|p| p.to_string()).collect();
+        plan_install_for_with(&programs, manager, move |pkg| have.contains(&pkg))
+    }
+
     #[test]
     fn install_plan_for_an_existing_package() {
-        let plan = plan_install_with("ncdu", Manager::Apt, |pkg| pkg == "ncdu").unwrap();
-        assert_eq!(plan.package, "ncdu");
-        assert_eq!(plan.display(), "sudo apt install -y ncdu");
-        assert_eq!(plan.manager, Manager::Apt);
+        let p = plan(&["ncdu"], Manager::Apt, &["ncdu"]).unwrap();
+        assert_eq!(p.packages, vec!["ncdu"]);
+        assert_eq!(p.display(), "sudo apt install -y ncdu");
+        assert_eq!(p.manager, Manager::Apt);
         // the table's package is what gets verified and installed
-        let plan = plan_install_with("fd", Manager::Apt, |pkg| pkg == "fd-find").unwrap();
-        assert_eq!(plan.display(), "sudo apt install -y fd-find");
-        let plan = plan_install_with("fd", Manager::Pacman, |pkg| pkg == "fd").unwrap();
-        assert_eq!(plan.display(), "sudo pacman -S --noconfirm fd");
+        let p = plan(&["fd"], Manager::Apt, &["fd-find"]).unwrap();
+        assert_eq!(p.display(), "sudo apt install -y fd-find");
+        let p = plan(&["fd"], Manager::Pacman, &["fd"]).unwrap();
+        assert_eq!(p.display(), "sudo pacman -S --noconfirm fd");
+        assert_eq!(
+            plan_install_for_with(&[], Manager::Apt, |_| true),
+            None,
+            "nothing to install"
+        );
+    }
+
+    #[test]
+    fn one_plan_for_several_programs_without_repeats() {
+        let p = plan(&["tree", "ncdu"], Manager::Apt, &["tree", "ncdu"]).unwrap();
+        assert_eq!(p.display(), "sudo apt install -y tree ncdu");
+        // two programs of one package are installed once
+        let p = plan(&["ss", "ip"], Manager::Apt, &["iproute2"]).unwrap();
+        assert_eq!(p.packages, vec!["iproute2"]);
     }
 
     #[test]
     fn no_plan_when_the_manager_does_not_have_the_package() {
-        assert_eq!(
-            plan_install_with("nonexistent-tool", Manager::Apt, |_| false),
-            None
-        );
+        assert_eq!(plan(&["nonexistent-tool"], Manager::Apt, &[]), None);
         // asked about the right package, not about the command's name
-        assert_eq!(plan_install_with("fd", Manager::Apt, |pkg| pkg == "fd"), None);
+        assert_eq!(plan(&["fd"], Manager::Apt, &["fd"]), None);
+        // all or nothing: a plan that leaves one program missing is not offered
+        assert_eq!(plan(&["tree", "nonexistent-tool"], Manager::Apt, &["tree"]), None);
+    }
+
+    /// The names come from commands that were read from tldr, cheats and history. They are never
+    /// run through a shell, but a name that is not a package name is not a plan either.
+    #[test]
+    fn odd_names_never_become_a_plan() {
+        for odd in [
+            "a;b", "a b", "-rf", "--yes", "$(x)", "a&&b", "x\ny", "", ".hidden", "+x", "a|b", "../x",
+        ] {
+            assert!(!valid_package_name(odd), "{odd:?}");
+            assert_eq!(
+                plan(&[odd], Manager::Apt, &["a;b", "a b", "-rf", "--yes", "$(x)", ""]),
+                None,
+                "{odd:?}"
+            );
+        }
+        for fine in [
+            "ncdu",
+            "fd-find",
+            "g++",
+            "python3.12",
+            "libfoo_bar",
+            "docker.io",
+            "7zip",
+            "lm_sensors",
+        ] {
+            assert!(valid_package_name(fine), "{fine:?}");
+        }
     }
 }

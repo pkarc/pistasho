@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes); 5.1 adelantada. Pendientes de la fase 2: 2.6 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
+**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación); 5.1 adelantada. Pendientes de la fase 2: 2.7 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -38,7 +38,7 @@ src/
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40); busca por prefijos (solo reevalúa lo que ya coincidía), en hilos, y solo en los primeros 150 caracteres de `alt`
-  tui.rs           ratatui en /dev/tty: lista de candidatos con tres modos (`ListMode::Search` = las cuatro cajas de `pistasho search` y el popup; `Explore` y `Alternatives` = una sola caja con filtro `❯`, en línea, 11 filas) + relleno de marcadores (con `start_fill`, un viewport corto de 7 filas)
+  tui.rs           ratatui en /dev/tty (`Screen` prepara y devuelve la terminal; `confirm_install` es la caja amarilla): lista de candidatos con tres modos (`ListMode::Search` = las cuatro cajas de `pistasho search` y el popup; `Explore` y `Alternatives` = una sola caja con filtro `❯`, en línea, 11 filas) + relleno de marcadores (con `start_fill`, un viewport corto de 7 filas)
   shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Genera solo el widget de `Ctrl-Space` (`_pistasho_ask`); el de `Ctrl-G` ya no existe
   eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml; `--mode fuzzy|bm25`, `--weights`
 eval/questions.toml   101 preguntas en español con sus herramientas correctas (40 originales + 61 genéricas); claves `question` / `tools`
@@ -58,6 +58,10 @@ Detalles ya resueltos que conviene no romper:
 - Binarios de un comando (`system::binaries`): los `{{marcadores}}` son una sola pieza (su `|` y sus espacios no son sintaxis de shell; sin eso salían programas falsos como `id}}`), los envoltorios (`sudo`, `env`, `xargs`, `nohup`, `time`, `nice`…) se saltan por lo que ejecutan, los builtins del shell nunca cuentan como faltantes, y los alias o funciones del usuario no se ven desde fuera (un comando que es alias saldría como faltante). `ask` rellena `Candidate.missing`; `--json` lo expone como `available` / `missing` y el mensaje bajo el prompt avisa `⚠ ncdu not installed`. No cambia el orden de los candidatos.
 - Paquetes (`packages.rs`, `data/packages.toml`): la tabla solo lista las excepciones; lo que no está se supone empaquetado con su propio nombre y el gestor lo confirma antes de proponerlo (`apt-cache policy` mira la línea `Candidate:` porque sale con 0 aunque no exista; `pacman -Si` y `dnf -q info` con su código de salida; `zypper what-provides`, no `info`, porque openSUSE llama `python313` al paquete y ofrece `python3` como capacidad). Los comandos de instalación no piden confirmación otra vez (`-y`, `--noconfirm`, `--non-interactive`) porque pistasho ya preguntó mostrando el comando exacto. **Al cambiar la tabla, validarla** con `pistasho doctor --table` en un contenedor de cada familia (`docker run --rm -v ~/.cargo/bin/pistasho:/usr/local/bin/pistasho:ro archlinux ...`; en Arch hace falta `pacman -Sy` antes y en openSUSE `zypper refresh`): así se encontraron `docker` → `moby-engine` y `7z` → `7zip` en Fedora, y los nombres de openSUSE.
 - `adapt` reescribe los programas que faltan pero existen con otro nombre en esa distro (solo `fd`, `bat` en Debian/Ubuntu y `python` → `python3`); se aplica al comando final (ya relleno) en `ask_on_prompt`, `ask_alternatives`, explorar y el popup, y el mensaje lo dice (`fd → fdfind`). `Candidate.missing` se calcula sobre el comando adaptado, así que no marca como faltante lo que se puede ejecutar con la reescritura.
+- Instalación (`offer_install` en `main.rs`, `tui::confirm_install`, `packages::run_install`): es lo único que pistasho ejecuta por su cuenta. Solo tras una tecla explícita (`y`, o `s` en español; **Enter no confirma**, hay un test), con el comando exacto en la caja, sin shell (los nombres de paquete se validan: `a;b`, `--yes`… nunca llegan al comando) y todo o nada (si un paquete no existe no se ofrece el plan). El hijo hereda `/dev/tty` como stdin/stdout/stderr, no el stdout del proceso (dentro del widget es el pipe de `$(...)`). Después se vuelve a comprobar el binario. No existe ninguna opción que instale sin preguntar; `install.offer = false` apaga la oferta.
+- Salidas de `ask --prompt --format zsh`: 0 = comando, 1 = sin coincidencia, 5 = la instalación falló (la salida es el mensaje), 130 = cancelado; el cuarto campo es `1` si algo escribió en la terminal (el gestor de paquetes).
+- zle tras una instalación: **no usar `zle -I`** (ni solo ni con `reset-prompt`): medido en tmux, el prompt se pierde o pisa la salida de `apt`. Lo que redibuja bien es `zle reset-prompt` a secas con el cursor en una línea en blanco; y como `reset-prompt` sube tantas líneas como tenga el prompt menos una, el widget (`_pistasho_room`) deja esas líneas en blanco antes (cuenta con `rows=("${(@f)${(%)PS1}}")`; `${#...}` de un escalar cuenta caracteres). Probado con prompts de 1, 2 y 3 líneas.
+- Cómo probar la instalación sin tocar la máquina: un `sudo` y un `apt` falsos en una carpeta al principio del `PATH` (el `apt` falso crea el binario) más `XDG_CONFIG_HOME` / `XDG_DATA_HOME` temporales con un atajo de prueba; y, para `apt` de verdad, `docker run -it ubuntu:24.04` con un `sudo` de relleno y la base copiada, manejado desde un panel de tmux.
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia
@@ -115,6 +119,9 @@ platforms = ["common", "linux"]
 history = true
 history_limit = 5000
 tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip"
+
+[install]
+offer = true                  # ofrecer instalar lo que falta; nunca instala sin preguntar
 
 [ui]
 height = "40%"                # alto del buscador en zsh: 40% | 15 | full
