@@ -11,7 +11,7 @@ mod tui;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use config::Config;
+use config::{Config, Height};
 use i18n::tr;
 use index::{Cheat, Index};
 use std::path::PathBuf;
@@ -41,6 +41,9 @@ enum Command {
         /// Do not ask for values for the {{placeholders}}
         #[arg(long)]
         no_fill: bool,
+        /// Height: `40%`, a number of lines or `full` (default: `ui.height`; the tmux popup is always full)
+        #[arg(long)]
+        height: Option<String>,
     },
     /// Search without the interface: prints the best results
     Query {
@@ -98,6 +101,7 @@ fn run() -> Result<ExitCode> {
             query,
             send_to,
             no_fill,
+            height,
         } => {
             let cfg = Config::load()?;
             let idx = Index::load(&cfg)?;
@@ -116,6 +120,7 @@ fn run() -> Result<ExitCode> {
                 tui::Options {
                     initial_query: query,
                     fill: !no_fill,
+                    height: search_height(&cfg, height.as_deref(), send_to.is_some()),
                 },
             )?;
             match outcome {
@@ -193,6 +198,17 @@ fn run() -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// The popup already bounds the searcher, so inside tmux it always uses its full area.
+fn search_height(cfg: &Config, flag: Option<&str>, in_popup: bool) -> Height {
+    if in_popup {
+        return Height::Full;
+    }
+    flag.and_then(Height::parse)
+        .or_else(|| Height::parse(&cfg.ui.height))
+        .or_else(|| Height::parse(config::DEFAULT_HEIGHT))
+        .unwrap_or(Height::Full)
 }
 
 fn send_to_tmux(pane: &str, cmd: &str) -> Result<()> {

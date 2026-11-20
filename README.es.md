@@ -54,6 +54,10 @@ pistasho config
 pistasho eval eval/questions.toml                           # mide la precisión del buscador
 ```
 
+### Alto del buscador
+
+En zsh el buscador abre compacto debajo del prompt (40% de la pantalla por defecto). Cámbialo con `[ui] height` en `config.toml` (`40%`, un número de líneas o `full`) o con `pistasho search --height`. El popup de tmux siempre usa su área completa.
+
 ## Idioma
 
 La interfaz va en inglés por defecto. Para español, pon `language = "es"` en `config.toml` (o elígelo en `pistasho config`) o exporta `PISTASHO_LANG=es`. El texto de `--help` solo está en inglés.

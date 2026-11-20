@@ -185,8 +185,10 @@ The code was never compiled with its dependencies.
 
 ## Phase 5 · Polish and launch
 
-### [ ] 5.1 Compact searcher · M
+### [x] 5.1 Compact searcher · M
 - ratatui `Viewport::Inline` below the prompt, like `fzf --height 40%`. `ui.height` option, with full screen as the alternative.
+
+**Done when:** in zsh the searcher opens below the prompt, and picking or cancelling leaves the prompt and cursor intact, also when the prompt is on the last row. (Done early, before phase 2.)
 
 ### [ ] 5.2 Packaging · M
 - cargo-dist for GitHub releases (Linux x86_64 / aarch64 binaries), AUR package and `cargo install pistasho` (publish the crate).
@@ -206,3 +208,4 @@ The code was never compiled with its dependencies.
 - 2026-11-19 · 1.1: it compiled on the first try with the pinned versions, with no API errors or version changes. Only adjustment: the `unnecessary_sort_by` clippy warning in `history.rs`. `Cargo.lock` is now versioned (it is a binary). CI green. `cargo install` puts the binary in `~/.cargo/bin`, which was not in `PATH`.
 - 2026-11-19 · Language: the project is now English by default (README, CLAUDE.md, PLAN.md). The Spanish versions are kept as `README.es.md`, `CLAUDE.es.md` and `PLAN.es.md` and must stay aligned. UI strings and code comments were migrated to English in the same change. The Spanish UI stays available through `language = "es"` / `PISTASHO_LANG=es` (`src/i18n.rs`); every new user-facing string needs both languages. The eval file is now `eval/questions.toml` with `question` / `tools` keys (the questions stay in Spanish on purpose). Default `languages` is now `["en", "es"]`.
 - 2026-11-19 · 1.2 (partial): verified headlessly in isolated tmux servers: `config` → `update` (6852 pages, 34878 examples) → `query`, the searcher + fill-in + send to a pane without Enter, and the zsh widget (`Ctrl-G` with prior text, pick, cursor at the end, Esc leaves the prompt untouched). Fix: the tmux popup runs with the tmux server's `PATH`, which lacked `~/.cargo/bin`, so `init tmux` now embeds the binary's absolute path. Still to verify by hand: the real `display-popup` and inside an ssh session. Finding for 2.1/2.2: the same tldr command appears twice (en and es) when placeholder names are translated (`{{path/to/file}}` vs `{{ruta/al/archivo}}`), because the merge key is the normalized command. With `languages = ["en", "es"]` the `query tar` descriptions come out in English (the 1.2 criterion said Spanish; use `["es", "en"]` for that).
+- 2026-11-19 · 5.1 done early: the zsh widget now uses `Viewport::Inline` (`ui.height`, default `40%`, or `--height`; asked in `pistasho config`). The tmux popup (`--send-to`) keeps the full screen. ratatui/crossterm read the cursor position through stdout, which in the widget is the `$(...)` pipe (the first attempt failed after a 2 s timeout), so `tui::run` redirects stdout to the tty while it runs. Verified in isolated tmux servers with the prompt at the top and on the last row: pick, fill-in, cancel, cursor at the end of the buffer. Also: `Cargo.toml` description is now English and `libc` is a direct dependency.

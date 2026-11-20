@@ -1,23 +1,27 @@
 //! Searcher interface. Draws on `/dev/tty` so stdout stays free
 //! and the zsh widget can capture the chosen command.
 
+use crate::config::Height;
 use crate::i18n::tr;
 use crate::index::{Entry, Source};
 use crate::placeholders::{self, Part};
 use crate::search::Searcher;
 use anyhow::{Context, Result};
 use ratatui::backend::CrosstermBackend;
+use ratatui::crossterm::cursor::{position, MoveTo};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
-use ratatui::{Frame, Terminal};
+use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use std::fs::File;
+use std::io::Write;
+use std::os::fd::AsRawFd;
 
 const MAX_RESULTS: usize = 300;
 
@@ -39,6 +43,8 @@ pub enum Outcome {
 pub struct Options {
     pub initial_query: String,
     pub fill: bool,
+    /// Full screen (alternate screen) or compact below the prompt.
+    pub height: Height,
 }
 
 struct Fill {
@@ -73,13 +79,44 @@ impl<'a> App<'a> {
 }
 
 /// Restores the terminal even on a panic.
-struct Guard;
+struct Guard {
+    alternate_screen: bool,
+    /// Original stdout, saved while it points at the tty (see `redirect_stdout_to`).
+    saved_stdout: Option<i32>,
+}
+
+/// Points stdout at the tty and returns the saved original. ratatui and crossterm query the
+/// cursor position through stdout, which inside the zsh widget is the pipe of `$(...)`, so the
+/// terminal's answer would never come back. The chosen command is printed after `run` returns.
+fn redirect_stdout_to(tty: &File) -> Option<i32> {
+    // SAFETY: plain fd duplication on descriptors we own; failures are checked.
+    unsafe {
+        let saved = libc::dup(libc::STDOUT_FILENO);
+        if saved < 0 {
+            return None;
+        }
+        if libc::dup2(tty.as_raw_fd(), libc::STDOUT_FILENO) < 0 {
+            libc::close(saved);
+            return None;
+        }
+        Some(saved)
+    }
+}
 
 impl Drop for Guard {
     fn drop(&mut self) {
+        if let Some(saved) = self.saved_stdout.take() {
+            // SAFETY: `saved` is the duplicate made in `redirect_stdout_to`.
+            unsafe {
+                libc::dup2(saved, libc::STDOUT_FILENO);
+                libc::close(saved);
+            }
+        }
         let _ = disable_raw_mode();
-        if let Ok(mut tty) = File::options().write(true).open("/dev/tty") {
-            let _ = execute!(tty, LeaveAlternateScreen);
+        if self.alternate_screen {
+            if let Ok(mut tty) = File::options().write(true).open("/dev/tty") {
+                let _ = execute!(tty, LeaveAlternateScreen);
+            }
         }
     }
 }
@@ -92,9 +129,35 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
         .context(tr("could not open /dev/tty", "no pude abrir /dev/tty"))?;
     let mut tty_w = tty.try_clone()?;
     enable_raw_mode()?;
-    let _guard = Guard;
-    execute!(tty_w, EnterAlternateScreen)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(tty))?;
+    let inline_rows = opts.height.rows(size().map(|(_, rows)| rows).unwrap_or(24));
+    let _guard = Guard {
+        alternate_screen: inline_rows.is_none(),
+        saved_stdout: if inline_rows.is_some() {
+            redirect_stdout_to(&tty_w)
+        } else {
+            None
+        },
+    };
+    // column of the prompt cursor, to put it back where zle expects it when we are done
+    let mut origin_col = 0;
+    let mut terminal = match inline_rows {
+        None => {
+            execute!(tty_w, EnterAlternateScreen)?;
+            Terminal::new(CrosstermBackend::new(tty))?
+        }
+        Some(rows) => {
+            origin_col = position().map(|(col, _)| col).unwrap_or(0);
+            // start on the line below the prompt so the prompt itself stays visible
+            tty_w.write_all(b"\r\n")?;
+            tty_w.flush()?;
+            Terminal::with_options(
+                CrosstermBackend::new(tty),
+                TerminalOptions {
+                    viewport: Viewport::Inline(rows),
+                },
+            )?
+        }
+    };
 
     let mut app = App {
         entries,
@@ -120,6 +183,12 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
             on_search_key(&mut app, key)
         };
         if let Some(outcome) = done {
+            if inline_rows.is_some() {
+                // erase the viewport and return to the prompt line (just above it)
+                let prompt_row = terminal.get_frame().area().y.saturating_sub(1);
+                terminal.clear()?;
+                execute!(tty_w, MoveTo(origin_col, prompt_row))?;
+            }
             terminal.show_cursor()?;
             return Ok(outcome);
         }

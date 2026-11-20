@@ -3,7 +3,7 @@ name = "pistasho"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
-description = "La pista del comando que necesitas, sin salir de la terminal"
+description = "The hint for the command you need, without leaving the terminal"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/pkarc/pistasho"
 readme = "README.md"
@@ -14,6 +14,7 @@ categories = ["command-line-utilities"]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "5"
+libc = "0.2"
 nucleo-matcher = "0.3"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }

@@ -705,6 +705,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dirs",
+ "libc",
  "nucleo-matcher",
  "ratatui",
  "serde",

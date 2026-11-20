@@ -34,7 +34,7 @@ src/
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40)
-  tui.rs           ratatui en /dev/tty, pantalla alternativa, modo búsqueda y modo relleno de marcadores
+  tui.rs           ratatui en /dev/tty: viewport compacto en línea (zsh) o pantalla alternativa (popup de tmux), modo búsqueda y modo relleno de marcadores
   shell.rs         código que imprime `init zsh` (widget zle) e `init tmux` (display-popup)
   eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml
 eval/questions.toml   40 preguntas en español con sus herramientas correctas (meta: unas 100); claves `question` / `tools`
@@ -55,7 +55,7 @@ Hay tres GIFs simulados (no capturas reales, dibujados con textos en español) q
 2. **Modo pregunta** (`Ctrl-Space`): el prompt cambia a ` ✦ pregunta `, escribes en lenguaje natural, Enter → spinner `resolviendo…` → el comando queda en el prompt normal. Si falta la herramienta: caja amarilla con OS, gestor y `sudo apt install -y X`, con las opciones `[s]` instalar, `[a]` alternativa sin instalar y `[esc]` cancelar. Al instalar, la salida de apt y la contraseña de sudo se ven en la terminal y al final se completa el comando.
 3. **Casos difíciles:** línea `⚡ local · tldr/zip · 41 ms` debajo del prompt (mensaje tipo `zle -M`); `✦ llm · haiku · 1.1 s · guardado en caché`; comando destructivo con caja roja (efecto, datos del dispositivo desde `lsblk`, señales), que queda en el prompt resaltado en rojo con `⚠ destructivo` a la derecha; dispositivos elegidos solo entre los extraíbles de `lsblk`.
 
-Pendiente de la fase 1: los GIFs muestran el buscador **compacto debajo del prompt** (tipo `fzf --height 40%`). Hoy usa la pantalla alternativa completa. Se puede cambiar a `Viewport::Inline` de ratatui cuando lo demás funcione.
+El buscador es **compacto debajo del prompt** en el widget de zsh (tipo `fzf --height 40%`, tarea 5.1 adelantada) con `Viewport::Inline` de ratatui; `ui.height` / `--height` aceptan `40%`, un número de líneas o `full`. El popup de tmux siempre usa su área completa. Ojo: dentro del widget stdout es el pipe de `$(...)` y ratatui/crossterm consultan la posición del cursor por stdout, así que `tui::run` apunta stdout al tty mientras corre (lo restaura `Guard` antes de imprimir el comando).
 
 ## Hoja de ruta
 
@@ -88,7 +88,7 @@ El detalle por tareas está en `PLAN.md`. Resumen:
 - Solo se envían pregunta + OS + shell.
 
 ### Fase 5: pulido
-- Buscador compacto (`Viewport::Inline`), empaquetado (cargo-dist, AUR), GIFs reales grabados con `vhs`, documentación.
+- Empaquetado (cargo-dist, AUR), GIFs reales grabados con `vhs`, documentación.
 
 ## Configuración (`~/.config/pistasho/config.toml`)
 
@@ -99,6 +99,9 @@ platforms = ["common", "linux"]
 history = true
 history_limit = 5000
 tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip"
+
+[ui]
+height = "40%"                # alto del buscador en zsh: 40% | 15 | full
 
 [keys]
 search = "^G"   # zsh bindkey

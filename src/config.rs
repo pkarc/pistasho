@@ -23,6 +23,7 @@ pub struct Config {
     pub history_limit: usize,
     pub tldr_url: String,
     pub keys: Keys,
+    pub ui: Ui,
     /// Decision model (phase 3). Not used yet.
     pub decide: Decide,
     /// LLM fallback (phase 4). Not used yet.
@@ -38,6 +39,64 @@ pub struct Keys {
     pub ask: String,
     /// Key after the tmux prefix for the popup.
     pub tmux: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ui {
+    /// Searcher height in the zsh widget: `40%`, a number of lines (`15`) or `full` for the
+    /// whole screen. The tmux popup always uses its own full area.
+    pub height: String,
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self {
+            height: DEFAULT_HEIGHT.into(),
+        }
+    }
+}
+
+pub const DEFAULT_HEIGHT: &str = "40%";
+/// The searcher layout needs this many rows to be usable.
+pub const MIN_INLINE_ROWS: u16 = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Height {
+    Full,
+    Lines(u16),
+    Percent(u16),
+}
+
+impl Height {
+    /// `full`, `40%` or `15`. Anything else is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim().to_ascii_lowercase();
+        if s == "full" {
+            return Some(Height::Full);
+        }
+        if let Some(p) = s.strip_suffix('%') {
+            return p
+                .trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|p| (1..=100).contains(p))
+                .map(Height::Percent);
+        }
+        s.parse::<u16>().ok().filter(|n| *n > 0).map(Height::Lines)
+    }
+
+    /// Rows for an inline viewport on a terminal with `term_rows` rows; `None` = full screen.
+    pub fn rows(self, term_rows: u16) -> Option<u16> {
+        let wanted = match self {
+            Height::Full => return None,
+            Height::Lines(n) => n,
+            Height::Percent(p) => (term_rows as u32 * p as u32 / 100) as u16,
+        };
+        // leave the prompt line visible above the viewport
+        let max = term_rows.saturating_sub(1).max(1);
+        Some(wanted.max(MIN_INLINE_ROWS).min(max))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +129,7 @@ impl Default for Config {
             history_limit: 5000,
             tldr_url: TLDR_URL.into(),
             keys: Keys::default(),
+            ui: Ui::default(),
             decide: Decide::default(),
             llm: Llm::default(),
         }
@@ -288,6 +348,20 @@ pub fn wizard() -> Result<(Config, bool)> {
         &cfg.keys.tmux,
     )?;
 
+    let h = ask(
+        &mut stdin,
+        tr(
+            "Searcher height in zsh (e.g. 40%, 15 lines, or full)",
+            "Alto del buscador en zsh (p. ej. 40%, 15 líneas o full)",
+        ),
+        &cfg.ui.height,
+    )?;
+    cfg.ui.height = if Height::parse(&h).is_some() {
+        h
+    } else {
+        DEFAULT_HEIGHT.into()
+    };
+
     cfg.decide.provider = choose(
         &mut stdin,
         tr(
@@ -400,4 +474,31 @@ pub fn wizard() -> Result<(Config, bool)> {
         yes,
     )?;
     Ok((cfg, !dl.to_lowercase().starts_with('n')))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_height() {
+        assert_eq!(Height::parse("40%"), Some(Height::Percent(40)));
+        assert_eq!(Height::parse(" 15 "), Some(Height::Lines(15)));
+        assert_eq!(Height::parse("FULL"), Some(Height::Full));
+        assert_eq!(Height::parse("0%"), None);
+        assert_eq!(Height::parse("150%"), None);
+        assert_eq!(Height::parse("0"), None);
+        assert_eq!(Height::parse("tall"), None);
+    }
+
+    #[test]
+    fn height_rows() {
+        assert_eq!(Height::Full.rows(50), None);
+        assert_eq!(Height::Percent(40).rows(50), Some(20));
+        // never below the minimum usable layout
+        assert_eq!(Height::Percent(10).rows(50), Some(MIN_INLINE_ROWS));
+        // never the whole terminal: the prompt line stays visible
+        assert_eq!(Height::Percent(100).rows(30), Some(29));
+        assert_eq!(Height::Lines(5).rows(8), Some(7));
+    }
 }

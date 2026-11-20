@@ -185,8 +185,10 @@ El código nunca se compiló con sus dependencias.
 
 ## Fase 5 · Pulido y lanzamiento
 
-### [ ] 5.1 Buscador compacto · M
+### [x] 5.1 Buscador compacto · M
 - `Viewport::Inline` de ratatui debajo del prompt, como `fzf --height 40%`. Opción `ui.height` y la pantalla completa como alternativa.
+
+**Lista cuando:** en zsh el buscador abre debajo del prompt, y elegir o cancelar deja el prompt y el cursor intactos, también con el prompt en la última fila. (Hecha antes de tiempo, antes de la fase 2.)
 
 ### [ ] 5.2 Empaquetado · M
 - cargo-dist para releases de GitHub (binarios Linux x86_64 / aarch64), paquete AUR y `cargo install pistasho` (publicar el crate).
@@ -206,3 +208,4 @@ El código nunca se compiló con sus dependencias.
 - 2026-11-19 · 1.1: compiló a la primera con las versiones fijadas, sin errores de API ni cambios de versión. Único ajuste: warning `unnecessary_sort_by` de clippy en `history.rs`. Se versionó `Cargo.lock` (es un binario). CI en verde. `cargo install` deja el binario en `~/.cargo/bin`, que no estaba en el `PATH`.
 - 2026-11-19 · Idioma: el proyecto ahora va en inglés por defecto (README, CLAUDE.md, PLAN.md). Las versiones en español se conservan como `README.es.md`, `CLAUDE.es.md` y `PLAN.es.md` y deben mantenerse alineadas. Las cadenas de la interfaz y los comentarios del código se migraron al inglés en el mismo cambio. La interfaz en español sigue disponible con `language = "es"` / `PISTASHO_LANG=es` (`src/i18n.rs`); toda cadena nueva de cara al usuario necesita ambos idiomas. El archivo de eval ahora es `eval/questions.toml` con las claves `question` / `tools` (las preguntas se quedan en español a propósito). Los `languages` por defecto ahora son `["en", "es"]`.
 - 2026-11-19 · 1.2 (parcial): verificado sin interfaz en servidores tmux aislados: `config` → `update` (6852 páginas, 34878 ejemplos) → `query`, el buscador + relleno + envío a un panel sin Enter, y el widget de zsh (`Ctrl-G` con texto previo, elegir, cursor al final, Esc deja el prompt intacto). Arreglo: el popup de tmux corre con el `PATH` del servidor de tmux, que no tenía `~/.cargo/bin`, así que `init tmux` ahora incrusta la ruta absoluta del binario. Falta verificar a mano: el `display-popup` real y dentro de una sesión ssh. Hallazgo para 2.1/2.2: el mismo comando de tldr aparece dos veces (en y es) cuando se traducen los nombres de los marcadores (`{{path/to/file}}` vs `{{ruta/al/archivo}}`), porque la clave de unión es el comando normalizado. Con `languages = ["en", "es"]` las descripciones de `query tar` salen en inglés (el criterio de la 1.2 decía español; usa `["es", "en"]` para eso).
+- 2026-11-19 · 5.1 adelantada: el widget de zsh ahora usa `Viewport::Inline` (`ui.height`, por defecto `40%`, o `--height`; se pregunta en `pistasho config`). El popup de tmux (`--send-to`) mantiene la pantalla completa. ratatui/crossterm leen la posición del cursor por stdout, que en el widget es el pipe de `$(...)` (el primer intento falló tras 2 s de espera), así que `tui::run` redirige stdout al tty mientras corre. Verificado en servidores tmux aislados con el prompt arriba y en la última fila: elegir, relleno, cancelar, cursor al final del buffer. Además: la descripción de `Cargo.toml` ahora está en inglés y `libc` es dependencia directa.

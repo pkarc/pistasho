@@ -34,7 +34,7 @@ src/
   placeholders.rs  {{placeholders}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (no deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), extended format, multiline, aggregation (no deps)
   search.rs        nucleo-matcher + bonuses (exact tool +80, mine +40, history up to +40)
-  tui.rs           ratatui on /dev/tty, alternate screen, search mode and placeholder fill mode
+  tui.rs           ratatui on /dev/tty: compact inline viewport (zsh) or alternate screen (tmux popup), search mode and placeholder fill mode
   shell.rs         code printed by `init zsh` (zle widget) and `init tmux` (display-popup)
   eval.rs          top-1 / top-3 per tool over eval/questions.toml
 eval/questions.toml   40 Spanish questions with their correct tools (goal: about 100); keys `question` / `tools`
@@ -55,7 +55,7 @@ Three simulated GIFs (not real captures, drawn with Spanish strings) define the 
 2. **Question mode** (`Ctrl-Space`): the prompt changes to ` ✦ ask `, you type in natural language, Enter → `resolving…` spinner → the command is left on the normal prompt. If the tool is missing: a yellow box with OS, package manager and `sudo apt install -y X`, with options `[y]` install (`[s]` in the Spanish UI), `[a]` alternative without installing and `[esc]` cancel. While installing, apt's output and the sudo password prompt show in the terminal and the command is completed at the end.
 3. **Hard cases:** a `⚡ local · tldr/zip · 41 ms` line below the prompt (a `zle -M`-style message); `✦ llm · haiku · 1.1 s · saved to cache`; a destructive command with a red box (effect, device data from `lsblk`, signals), left on the prompt highlighted in red with `⚠ destructive` on the right; devices chosen only among removable ones from `lsblk`.
 
-Pending from phase 1: the GIFs show the searcher **compact below the prompt** (like `fzf --height 40%`). Today it uses the full alternate screen. It can be switched to ratatui's `Viewport::Inline` once everything else works.
+The searcher is **compact below the prompt** in the zsh widget (like `fzf --height 40%`, task 5.1 done early) via ratatui's `Viewport::Inline`; `ui.height` / `--height` take `40%`, a line count or `full`. The tmux popup always uses its full area. Gotcha: inside the widget stdout is the `$(...)` pipe, and ratatui/crossterm query the cursor position through stdout, so `tui::run` points stdout at the tty while it runs (restored by `Guard` before the command is printed).
 
 ## Roadmap
 
@@ -88,7 +88,7 @@ Task-level detail is in `PLAN.md`. Summary:
 - Only the question + OS + shell are sent.
 
 ### Phase 5: polish
-- Compact searcher (`Viewport::Inline`), packaging (cargo-dist, AUR), real GIFs recorded with `vhs`, documentation.
+- Packaging (cargo-dist, AUR), real GIFs recorded with `vhs`, documentation.
 
 ## Configuration (`~/.config/pistasho/config.toml`)
 
@@ -99,6 +99,9 @@ platforms = ["common", "linux"]
 history = true
 history_limit = 5000
 tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip"
+
+[ui]
+height = "40%"                # zsh searcher height: 40% | 15 | full
 
 [keys]
 search = "^G"   # zsh bindkey
