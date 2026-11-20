@@ -7,6 +7,7 @@
 use crate::db::{self, Db, Weights, DEFAULT_WEIGHTS};
 use crate::index::{Entry, Source};
 use crate::placeholders;
+use crate::system;
 use anyhow::Result;
 use std::collections::HashSet;
 
@@ -34,6 +35,9 @@ pub const PARAMS: Params = Params {
 pub struct Candidate {
     pub entry: Entry,
     pub score: f64,
+    /// Programs the command runs that are not installed (shell builtins do not count).
+    /// Empty means the candidate can run as it is.
+    pub missing: Vec<String>,
 }
 
 /// Words that say nothing about which command is wanted, Spanish and English. Compared without
@@ -95,6 +99,7 @@ pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Resul
         .map(|(entry, score)| Candidate {
             score: score * boost(&entry, params),
             entry,
+            missing: Vec::new(),
         })
         .collect();
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -102,6 +107,10 @@ pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Resul
     let mut seen = HashSet::new();
     ranked.retain(|c| seen.insert(placeholders::shape(&c.entry.cmd)));
     ranked.truncate(limit);
+    // looked up after trimming: only the candidates that will be shown cost a PATH search
+    for c in &mut ranked {
+        c.missing = system::missing_binaries(&c.entry.cmd);
+    }
     Ok(ranked)
 }
 
@@ -223,6 +232,33 @@ mod tests {
             top[0].entry.cmd, "ssh root@10.0.0.99",
             "the more used one comes first"
         );
+    }
+
+    /// Candidates say whether their programs are installed, without changing the order.
+    #[test]
+    fn candidates_are_marked_available_or_missing() {
+        let db = db_with(
+            vec![
+                entry(
+                    "pistasho-no-such-tool",
+                    "pistasho-no-such-tool --size {{dir}}",
+                    "disk usage browser",
+                    "",
+                    Source::Tldr,
+                    0,
+                ),
+                entry("ls", "ls -l | sort", "disk usage listing", "", Source::Tldr, 0),
+            ],
+            vec![],
+            vec![],
+        );
+        let found = ask(&db, "disk usage", 5).unwrap();
+        let by_tool = |t: &str| found.iter().find(|c| c.entry.tool == t).unwrap();
+        assert_eq!(
+            by_tool("pistasho-no-such-tool").missing,
+            vec!["pistasho-no-such-tool"]
+        );
+        assert!(by_tool("ls").missing.is_empty(), "ls and sort are installed");
     }
 
     #[test]

@@ -9,6 +9,7 @@ mod placeholders;
 mod prompt;
 mod search;
 mod shell;
+mod system;
 mod tldr;
 mod tui;
 
@@ -309,6 +310,8 @@ fn run() -> Result<ExitCode> {
                         "source": c.entry.source.db_name(),
                         "origin": c.entry.origin,
                         "score": c.score,
+                        "available": c.missing.is_empty(),
+                        "missing": c.missing,
                     })).collect::<Vec<_>>(),
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
@@ -434,6 +437,7 @@ fn ask_on_prompt(
                 &best.entry.tool,
                 started.elapsed().as_millis(),
                 more,
+                &best.missing,
             );
             let command = if send_to.is_some() {
                 match pick_alternative(cfg, &question, &best.entry.cmd, true)? {
@@ -484,8 +488,15 @@ fn explore_list(cfg: &Config) -> Result<Option<String>> {
 
 /// The line under the prompt after an answer: where it came from, how long it took, and how to
 /// get the other candidates.
-fn found_message(source: &str, tool: &str, ms: u128, more: usize) -> String {
+fn found_message(source: &str, tool: &str, ms: u128, more: usize, missing: &[String]) -> String {
     let mut message = format!("⚡ local · {source}/{tool} · {ms} ms");
+    if !missing.is_empty() {
+        message.push_str(&format!(
+            " · ⚠ {} {}",
+            missing.join(", "),
+            tr("not installed", "no instalado")
+        ));
+    }
     if more > 0 {
         let hint = match i18n::lang() {
             i18n::Lang::En => format!("Ctrl-Space: see {more} more"),
@@ -589,13 +600,23 @@ mod tests {
     fn answer_message_points_to_the_other_candidates() {
         i18n::set(i18n::Lang::En);
         assert_eq!(
-            found_message("tldr", "fc", 12, 5),
+            found_message("tldr", "fc", 12, 5, &[]),
             "⚡ local · tldr/fc · 12 ms · Ctrl-Space: see 5 more"
         );
         // nothing else to show: no hint
         assert_eq!(
-            found_message("mine", "fuser", 3, 0),
+            found_message("mine", "fuser", 3, 0, &[]),
             "⚡ local · mine/fuser · 3 ms"
         );
+    }
+
+    #[test]
+    fn answer_message_warns_about_programs_that_are_not_installed() {
+        i18n::set(i18n::Lang::En);
+        assert_eq!(
+            found_message("tldr", "ncdu", 8, 4, &["ncdu".to_string()]),
+            "⚡ local · tldr/ncdu · 8 ms · ⚠ ncdu not installed · Ctrl-Space: see 4 more"
+        );
+        assert!(found_message("tldr", "x", 1, 0, &["a".into(), "b".into()]).contains("⚠ a, b not installed"));
     }
 }
