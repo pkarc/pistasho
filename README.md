@@ -6,7 +6,7 @@
 
 Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phase 2 in progress**. Questions are answered locally with BM25 over a full-text index. Alternatives for a wrong answer, embeddings, installing a missing tool and risk warnings come next; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
+Status: **phase 2 in progress**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Embeddings, installing a missing tool and risk warnings come next; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
 
 ## Installation
 
@@ -32,6 +32,7 @@ pistasho init tmux >> ~/.tmux.conf
 | Where | Key | What it does |
 |---|---|---|
 | zsh | `Ctrl-Space` | Takes over the prompt line (` ✦ ask `): type a question, `Enter` puts the best command on the prompt. Text already on the prompt becomes the question |
+| zsh | `Ctrl-Space` again | Not the one? While the prompt still holds the answer, opens **other options** for the same question: a filter line and the candidates. Typing searches everything, `Enter` replaces the command, `Esc` keeps it |
 | question | `Enter` | Resolve; if the command has placeholders, asks for their values |
 | question | `Tab` (empty line) | Explore everything: your cheats, history and tldr |
 | question | `Esc` / `Ctrl-C` | Cancel, the prompt stays as it was |

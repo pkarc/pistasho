@@ -3,8 +3,13 @@
 use crate::config::Config;
 
 /// The zsh widget behind `Ctrl-Space`: a question on the prompt line, the best command left in
-/// `BUFFER`. Never runs it. `pistasho ask --prompt --format zsh` prints `command NUL message`
+/// `BUFFER`. Never runs it. `pistasho ask --format zsh` prints `command NUL message NUL question`
 /// (zsh keeps NUL bytes in `$(...)`, which is what lets a multiline command travel safely).
+///
+/// The widget remembers the last question and the command it put on the prompt. If `Ctrl-Space`
+/// is pressed again while the prompt still holds exactly that command, it opens the other
+/// options for the same question instead of asking a new one; any edit, or running the line,
+/// makes the next `Ctrl-Space` a new question.
 pub fn zsh(cfg: &Config) -> String {
     let key = cfg.keys.ask.replace('\'', "");
     format!(
@@ -15,12 +20,18 @@ _pistasho_ask() {{
   local out ret
   local -a parts
   # HISTFILE is a plain zsh variable; pass it along so history can be read
-  out="$(HISTFILE="$HISTFILE" command pistasho ask --prompt --format zsh --initial "$BUFFER" </dev/tty)"
+  if [[ -n "$BUFFER" && -n "$_PISTASHO_LAST_Q" && "$BUFFER" == "$_PISTASHO_LAST_CMD" ]]; then
+    out="$(HISTFILE="$HISTFILE" command pistasho ask --alternatives --current "$BUFFER" --format zsh -- "$_PISTASHO_LAST_Q" </dev/tty)"
+  else
+    out="$(HISTFILE="$HISTFILE" command pistasho ask --prompt --format zsh --initial "$BUFFER" </dev/tty)"
+  fi
   ret=$?
   if (( ret == 0 )) && [[ -n "$out" ]]; then
     parts=("${{(@0)out}}")
     BUFFER="${{parts[1]}}"
     CURSOR=${{#BUFFER}}
+    _PISTASHO_LAST_CMD="$BUFFER"
+    _PISTASHO_LAST_Q="${{parts[3]:-}}"
     zle reset-prompt
     [[ -n "${{parts[2]}}" ]] && zle -M "${{parts[2]}}"
   else
@@ -29,6 +40,12 @@ _pistasho_ask() {{
   fi
   return 0
 }}
+# forget the question when the line is accepted, so it cannot leak into the next prompt
+_pistasho_forget() {{
+  unset _PISTASHO_LAST_Q _PISTASHO_LAST_CMD
+}}
+autoload -Uz add-zle-hook-widget
+add-zle-hook-widget zle-line-finish _pistasho_forget
 zle -N _pistasho_ask
 bindkey -M emacs '{key}' _pistasho_ask
 bindkey -M viins '{key}' _pistasho_ask
@@ -96,6 +113,10 @@ mod tests {
         assert!(out.contains("zle -N _pistasho_ask"));
         assert!(out.contains("bindkey -M emacs '^ ' _pistasho_ask"));
         assert!(out.contains("ask --prompt --format zsh"));
+        // a second Ctrl-Space on the unedited answer opens the alternatives for the same question
+        assert!(out.contains("ask --alternatives --current \"$BUFFER\""));
+        assert!(out.contains("\"$BUFFER\" == \"$_PISTASHO_LAST_CMD\""));
+        assert!(out.contains("add-zle-hook-widget zle-line-finish _pistasho_forget"));
         assert!(!out.contains("_pistasho_search"), "the Ctrl-G widget is gone");
         // the widget must pass HISTFILE along: it is a plain zsh variable, not exported
         assert!(out.contains("HISTFILE=\"$HISTFILE\""));

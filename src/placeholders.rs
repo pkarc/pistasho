@@ -122,6 +122,36 @@ pub fn shape(cmd: &str) -> String {
         .collect()
 }
 
+/// Whether `filled` could have come from `template` by filling in (or leaving) its placeholders:
+/// the literal text between the placeholders has to appear in order, anchored at both ends.
+/// A placeholder that was left empty stays in the text as `{{name}}`, which also fits.
+/// It finds the template a command on the prompt was made from, even after it was filled in.
+pub fn matches_template(template: &str, filled: &str) -> bool {
+    let parts = parse(template);
+    let last = parts.len().saturating_sub(1);
+    let mut rest = filled;
+    for (k, part) in parts.iter().enumerate() {
+        let Part::Text(t) = part else { continue };
+        let t = t.as_str();
+        if k == 0 && k == last {
+            return rest == t;
+        } else if k == 0 {
+            match rest.strip_prefix(t) {
+                Some(r) => rest = r,
+                None => return false,
+            }
+        } else if k == last {
+            return rest.ends_with(t);
+        } else {
+            match rest.find(t) {
+                Some(p) => rest = &rest[p + t.len()..],
+                None => return false,
+            }
+        }
+    }
+    true
+}
+
 /// The command without its `{{placeholders}}`: what is left to search by (`tar czf --directory .`).
 /// Placeholder names like `path/to/file` appear in almost every tldr command and would drown
 /// out the words that tell commands apart.
@@ -187,6 +217,29 @@ mod tests {
         );
         // a normal bracketed placeholder is left alone
         assert_eq!(normalize_tldr("echo {{[text]}}"), "echo {{[text]}}");
+    }
+
+    #[test]
+    fn finds_the_template_of_a_filled_command() {
+        let t = "tar xf {{path/to/source.tar}} --directory {{path/to/dir}}";
+        assert!(matches_template(t, "tar xf fichero.tar.gz --directory destino"));
+        // a placeholder left empty stays as `{{name}}`
+        assert!(matches_template(
+            t,
+            "tar xf {{path/to/source.tar}} --directory destino"
+        ));
+        assert!(matches_template(t, "tar xf a --directory {{path/to/dir}}"));
+        assert!(!matches_template(t, "tar cf fichero.tar.gz --directory destino"));
+        assert!(!matches_template(t, "tar xf fichero.tar.gz"));
+        // a template that ends with a placeholder accepts any tail
+        assert!(matches_template("ssh {{user}}@{{host}}", "ssh root@10.0.0.12"));
+        assert!(!matches_template("ssh {{user}}@{{host}}", "scp root@10.0.0.12"));
+        // no placeholders: exact
+        assert!(matches_template("uptime --pretty", "uptime --pretty"));
+        assert!(!matches_template("uptime --pretty", "uptime --pretty -x"));
+        // text after the last placeholder is anchored at the end
+        assert!(matches_template("cp {{a}} {{b}}.bak", "cp x y.bak"));
+        assert!(!matches_template("cp {{a}} {{b}}.bak", "cp x y.old"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Searcher interface. Draws on `/dev/tty` so stdout stays free
+//! Candidate list and placeholder fill-in. Draws on `/dev/tty` so stdout stays free
 //! and the zsh widget can capture the chosen command.
 
 use crate::config::Height;
@@ -26,6 +26,8 @@ use std::os::fd::AsRawFd;
 const MAX_RESULTS: usize = 300;
 /// Rows of the fill-only viewport: input box (3) + command preview (3) + hint (1).
 const FILL_ONLY_ROWS: u16 = 7;
+/// Rows of the single-box list (explore / alternatives): 2 borders, the filter line, 8 rows.
+const COMPACT_ROWS: u16 = 11;
 
 // Palette (Tokyo Night)
 const FG: Color = Color::Rgb(0xc0, 0xca, 0xf5);
@@ -38,8 +40,26 @@ const ORANGE: Color = Color::Rgb(0xff, 0x9e, 0x64);
 const SEL: Color = Color::Rgb(0x28, 0x34, 0x57);
 
 pub enum Outcome {
-    Selected(String),
+    /// The command, and where it came from (`tldr · common/fc`, `cheats.toml`, `history`);
+    /// the origin is empty when it does not apply.
+    Selected(String, String),
     Cancelled,
+}
+
+/// What the list is for (ADR 0001).
+pub enum ListMode {
+    /// `pistasho search` and the tmux popup: the classic four boxes with details.
+    Search,
+    /// Everything — your cheats, history and tldr — in one box with a filter.
+    Explore,
+    /// The second `Ctrl-Space`: the candidates for `question`, which stay on screen while the
+    /// filter is empty; typing searches everything. `candidates` and `current` are indices into
+    /// the entries given to [`run`]; `current` is the command on the prompt, selected at first.
+    Alternatives {
+        question: String,
+        candidates: Vec<usize>,
+        current: Option<usize>,
+    },
 }
 
 pub struct Options {
@@ -49,6 +69,7 @@ pub struct Options {
     pub height: Height,
     /// Skip the search and go straight to filling the placeholders of this command.
     pub start_fill: Option<String>,
+    pub mode: ListMode,
 }
 
 struct Fill {
@@ -83,10 +104,26 @@ struct App<'a> {
     fill_enabled: bool,
     /// Only the placeholder fill-in, no search: a short viewport without list or details.
     fill_only: bool,
+    mode: ListMode,
+    /// Origin of the entry whose placeholders are being filled.
+    fill_origin: String,
 }
 
 impl<'a> App<'a> {
     fn refresh(&mut self) {
+        if self.query.trim().is_empty() {
+            if let ListMode::Alternatives {
+                candidates, current, ..
+            } = &self.mode
+            {
+                self.results = candidates.clone();
+                self.sel = current
+                    .and_then(|c| candidates.iter().position(|&i| i == c))
+                    .unwrap_or(0);
+                self.offset = 0;
+                return;
+            }
+        }
         self.results = self.searcher.rank(self.entries, &self.query, MAX_RESULTS);
         self.sel = 0;
         self.offset = 0;
@@ -153,9 +190,12 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
         .as_deref()
         .is_some_and(placeholders::has_placeholders);
     let term_rows = size().map(|(_, rows)| rows).unwrap_or(24);
+    let compact = !matches!(opts.mode, ListMode::Search);
     let inline_rows = if fill_only {
         // input box + command preview + hint line, whatever `ui.height` says
         Some(FILL_ONLY_ROWS.min(term_rows.saturating_sub(1).max(1)))
+    } else if compact {
+        Some(COMPACT_ROWS.min(term_rows.saturating_sub(1).max(1)))
     } else {
         opts.height.rows(term_rows)
     };
@@ -202,6 +242,8 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
             .map(Fill::new),
         fill_enabled: opts.fill,
         fill_only,
+        mode: opts.mode,
+        fill_origin: String::new(),
     };
     app.refresh();
 
@@ -265,13 +307,16 @@ fn on_search_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
             let entry = app.selected()?;
             if app.fill_enabled && placeholders::has_placeholders(&entry.cmd) {
                 app.fill = Some(Fill::new(&entry.cmd));
+                app.fill_origin = entry.origin.clone();
                 None
             } else {
-                Some(Outcome::Selected(entry.cmd.clone()))
+                Some(Outcome::Selected(entry.cmd.clone(), entry.origin.clone()))
             }
         }
         // Tab: insert the template as is, with the {{placeholders}}
-        KeyCode::Tab => app.selected().map(|e| Outcome::Selected(e.cmd.clone())),
+        KeyCode::Tab => app
+            .selected()
+            .map(|e| Outcome::Selected(e.cmd.clone(), e.origin.clone())),
         KeyCode::Backspace => {
             app.query.pop();
             app.refresh();
@@ -287,13 +332,14 @@ fn on_search_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
 }
 
 fn on_fill_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
+    let origin = app.fill_origin.clone();
     let fill = app.fill.as_mut()?;
     // Esc: insert with the placeholders still missing
     if key.code == KeyCode::Esc || ctrl(&key, 'g') {
-        return Some(Outcome::Selected(placeholders::fill(
-            &fill.template,
-            &fill.values,
-        )));
+        return Some(Outcome::Selected(
+            placeholders::fill(&fill.template, &fill.values),
+            origin,
+        ));
     }
     if ctrl(&key, 'c') {
         return Some(Outcome::Cancelled);
@@ -308,10 +354,10 @@ fn on_fill_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
             };
             fill.cur += 1;
             if fill.cur >= fill.names.len() {
-                return Some(Outcome::Selected(placeholders::fill(
-                    &fill.template,
-                    &fill.values,
-                )));
+                return Some(Outcome::Selected(
+                    placeholders::fill(&fill.template, &fill.values),
+                    origin,
+                ));
             }
             if let Some(prev) = &fill.values[fill.cur] {
                 fill.input = prev.clone();
@@ -359,7 +405,8 @@ fn cmd_spans(cmd: &str, bg: Option<Color>) -> Vec<Span<'static>> {
 
 fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    if app.fill_only {
+    let compact = !matches!(app.mode, ListMode::Search);
+    if app.fill_only || (compact && app.fill.is_some()) {
         let [top, preview, footer] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Length(3),
@@ -372,6 +419,10 @@ fn draw(f: &mut Frame, app: &mut App) {
             Paragraph::new(Line::styled(footer_hint(true), Style::default().fg(GRAY))),
             footer,
         );
+        return;
+    }
+    if compact {
+        draw_compact(f, app, area);
         return;
     }
     let [top, list, detail, footer] = Layout::vertical([
@@ -493,6 +544,12 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    f.render_widget(Paragraph::new(list_lines(app, h)), inner);
+}
+
+/// The visible rows of the result list (scrolled so the selection shows), or a message when
+/// there is nothing to list.
+fn list_lines(app: &mut App, h: usize) -> Vec<Line<'static>> {
     if app.results.is_empty() {
         let msg = if app.entries.is_empty() {
             tr(
@@ -502,11 +559,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             tr(" no results", " sin resultados")
         };
-        f.render_widget(
-            Paragraph::new(Line::styled(msg, Style::default().fg(GRAY))),
-            inner,
-        );
-        return;
+        return vec![Line::styled(msg, Style::default().fg(GRAY))];
     }
 
     // scroll so the selection is always visible
@@ -516,8 +569,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         app.offset = app.sel + 1 - h;
     }
 
-    let lines: Vec<Line> = app
-        .results
+    app.results
         .iter()
         .enumerate()
         .skip(app.offset)
@@ -541,8 +593,65 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             }
             line
         })
-        .collect();
-    f.render_widget(Paragraph::new(lines), inner);
+        .collect()
+}
+
+/// The single box of explore / alternatives: title, a `❯` filter line, the rows, and the key
+/// hints on the bottom border (ADR 0001).
+fn draw_compact(f: &mut Frame, app: &mut App, area: Rect) {
+    let (title, hint) = match &app.mode {
+        ListMode::Alternatives { question, .. } => (
+            format!(
+                "{} · «{}»",
+                tr("other options", "otras opciones"),
+                clip(question, (area.width as usize).saturating_sub(24))
+            ),
+            tr(
+                " ↑↓ move · ⏎ replace · esc keep current ",
+                " ↑↓ mover · ⏎ reemplazar · esc dejar el actual ",
+            ),
+        ),
+        _ => (
+            tr(
+                "explore · your cheats, history and tldr",
+                "explorar · tus atajos, historial y tldr",
+            )
+            .to_string(),
+            tr(
+                " ↑↓ move · ⏎ pick · tab without filling · esc exit ",
+                " ↑↓ mover · ⏎ elegir · tab sin rellenar · esc salir ",
+            ),
+        ),
+    };
+    let b = block(&title).title_bottom(Line::styled(hint, Style::default().fg(GRAY)).right_aligned());
+    let inner = b.inner(area);
+    f.render_widget(b, area);
+    if inner.height == 0 {
+        return;
+    }
+    let [filter, rows] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    let line = Line::from(vec![
+        Span::styled("❯ ", Style::default().fg(MAG).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            app.query.clone(),
+            Style::default().fg(FG).add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(line), filter);
+    let x = filter.x + 2 + app.query.chars().count() as u16;
+    f.set_cursor_position((x.min(filter.right().saturating_sub(1)), filter.y));
+    let lines = list_lines(app, rows.height as usize);
+    f.render_widget(Paragraph::new(lines), rows);
+}
+
+/// `s` cut to at most `max` characters, with an ellipsis when it was longer.
+fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let kept: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{kept}…")
+    }
 }
 
 fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
@@ -555,4 +664,153 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         _ => vec![],
     };
     f.render_widget(Paragraph::new(lines).block(b), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(tool: &str, cmd: &str, source: Source) -> Entry {
+        Entry {
+            cmd: cmd.into(),
+            desc: String::new(),
+            alt: String::new(),
+            tool: tool.into(),
+            source,
+            origin: format!("origin of {cmd}"),
+            count: 0,
+        }
+    }
+
+    fn entries() -> Vec<Entry> {
+        vec![
+            entry("tar", "tar xf {{file}}", Source::Tldr),
+            entry("ss", "ss -tlnp", Source::Tldr),
+            entry("fuser", "fuser -k {{port}}/tcp", Source::Cheat),
+            entry("ssh", "ssh root@host", Source::Hist),
+            entry("uptime", "uptime --pretty", Source::Tldr),
+        ]
+    }
+
+    fn app<'a>(entries: &'a [Entry], mode: ListMode) -> App<'a> {
+        let mut app = App {
+            entries,
+            searcher: Searcher::new(entries),
+            query: String::new(),
+            results: Vec::new(),
+            sel: 0,
+            offset: 0,
+            fill: None,
+            fill_enabled: true,
+            fill_only: false,
+            mode,
+            fill_origin: String::new(),
+        };
+        app.refresh();
+        app
+    }
+
+    fn alternatives(candidates: Vec<usize>, current: Option<usize>) -> ListMode {
+        ListMode::Alternatives {
+            question: "how long has it been up".into(),
+            candidates,
+            current,
+        }
+    }
+
+    #[test]
+    fn alternatives_open_on_the_candidates_with_the_current_one_selected() {
+        let e = entries();
+        let a = app(&e, alternatives(vec![4, 1, 0], Some(1)));
+        assert_eq!(
+            a.results,
+            vec![4, 1, 0],
+            "the question's candidates, in their order"
+        );
+        assert_eq!(a.sel, 1, "the command on the prompt is the selected row");
+        assert_eq!(a.selected().unwrap().tool, "ss");
+    }
+
+    #[test]
+    fn alternatives_without_a_known_current_start_at_the_top() {
+        let e = entries();
+        let a = app(&e, alternatives(vec![4, 1], None));
+        assert_eq!((a.results.clone(), a.sel), (vec![4, 1], 0));
+    }
+
+    #[test]
+    fn typing_searches_everything_and_clearing_returns_to_the_candidates() {
+        let e = entries();
+        let mut a = app(&e, alternatives(vec![4], Some(4)));
+        a.query = "fuser".into();
+        a.refresh();
+        assert_eq!(e[a.results[0]].tool, "fuser", "not limited to the candidates");
+        a.query.clear();
+        a.refresh();
+        assert_eq!(a.results, vec![4]);
+        assert_eq!(a.sel, 0);
+    }
+
+    #[test]
+    fn explore_lists_cheats_then_history_then_tldr() {
+        let e = entries();
+        let a = app(&e, ListMode::Explore);
+        let sources: Vec<Source> = a.results.iter().map(|&i| e[i].source).collect();
+        assert_eq!(
+            sources,
+            vec![
+                Source::Cheat,
+                Source::Hist,
+                Source::Tldr,
+                Source::Tldr,
+                Source::Tldr
+            ]
+        );
+    }
+
+    #[test]
+    fn enter_on_a_row_without_placeholders_returns_it_with_its_origin() {
+        let e = entries();
+        let mut a = app(&e, alternatives(vec![1, 0], Some(1)));
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        match on_search_key(&mut a, key) {
+            Some(Outcome::Selected(cmd, origin)) => {
+                assert_eq!(cmd, "ss -tlnp");
+                assert_eq!(origin, "origin of ss -tlnp");
+            }
+            _ => panic!("expected a selection"),
+        }
+    }
+
+    #[test]
+    fn enter_on_a_row_with_placeholders_asks_for_them_and_remembers_the_origin() {
+        let e = entries();
+        let mut a = app(&e, alternatives(vec![0], Some(0)));
+        assert!(on_search_key(&mut a, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).is_none());
+        assert!(a.fill.is_some());
+        let done = on_fill_key(&mut a, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+            .or_else(|| on_fill_key(&mut a, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        match done {
+            Some(Outcome::Selected(cmd, origin)) => {
+                assert_eq!(cmd, "tar xf x");
+                assert_eq!(origin, "origin of tar xf {{file}}");
+            }
+            _ => panic!("expected the filled command"),
+        }
+    }
+
+    #[test]
+    fn escape_keeps_the_current_command() {
+        let e = entries();
+        let mut a = app(&e, alternatives(vec![1], Some(1)));
+        let out = on_search_key(&mut a, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(out, Some(Outcome::Cancelled)));
+    }
+
+    #[test]
+    fn long_titles_are_clipped_with_an_ellipsis() {
+        assert_eq!(clip("short", 10), "short");
+        assert_eq!(clip("abcdefghij", 5), "abcd…");
+        assert_eq!(clip("anything", 0), "…");
+    }
 }

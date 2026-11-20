@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Las fases 0 y 1 están escritas y ya compilan con dependencias reales** (tarea 1.1 de `PLAN.md`: build, clippy, tests y CI en verde). Aún sin verificar de punta a punta: `pistasho config`, `pistasho update`, el widget de zsh y el popup de tmux (tarea 1.2).
+**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`) y 2.3c (explorar con `Tab`); 5.1 adelantada. Pendientes de la fase 2: 2.3d (popup de tmux en modo pregunta), 2.4 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -36,7 +36,7 @@ src/
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40); busca por prefijos (solo reevalúa lo que ya coincidía), en hilos, y solo en los primeros 150 caracteres de `alt`
-  tui.rs           ratatui en /dev/tty: lista de candidatos (hoy: el buscador, al que se llega con `Tab` en la pregunta; la tarea 2.3b la reescribe como alternativas / explorar) + relleno de marcadores (con `start_fill`, un viewport corto de 7 filas), en línea debajo del prompt
+  tui.rs           ratatui en /dev/tty: lista de candidatos con tres modos (`ListMode::Search` = las cuatro cajas de `pistasho search` y el popup; `Explore` y `Alternatives` = una sola caja con filtro `❯`, en línea, 11 filas) + relleno de marcadores (con `start_fill`, un viewport corto de 7 filas)
   shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Genera solo el widget de `Ctrl-Space` (`_pistasho_ask`); el de `Ctrl-G` ya no existe
   eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml; `--mode fuzzy|bm25`, `--weights`
 eval/questions.toml   101 preguntas en español con sus herramientas correctas (40 originales + 61 genéricas); claves `question` / `tools`
@@ -51,7 +51,8 @@ Detalles ya resueltos que conviene no romper:
 - La base es derivada: `update` rehace las filas de tldr; un `SCHEMA_VERSION` distinto la reinicia. Las columnas SQL son `description` y `uses` (no `desc` / `count`, palabras reservadas).
 - Historial de zsh: `HISTFILE` es una variable de zsh que casi nunca está exportada, así que el widget la pasa (`HISTFILE="$HISTFILE" command pistasho …`) y `Config::history_path` prueba `~/.zsh_history`, `~/.histfile`… si no hay variable.
 - Popup de tmux: `display-popup` NO expande formatos (`#{pane_id}`) dentro de su comando; el proceso recibe el texto literal. Por eso `init tmux` genera un `run-shell -b` (que sí expande `#{pane_id}` y `#{client_name}`) que lanza `tmux display-popup` con valores ya resueltos. El `TMUX_PANE` del popup es el del propio popup, no el panel de destino. Probar siempre con un cliente tmux real (pty), no solo con `send-keys`.
-- Widget de `Ctrl-Space`: `pistasho ask --prompt --format zsh --initial "$BUFFER"` imprime `comando NUL mensaje` (zsh conserva los NUL en `$(...)`); código 0 = hay comando, 1 = sin coincidencia (la salida es el mensaje), 130 = cancelado. El widget llama a `zle reset-prompt` y luego a `zle -M` (al revés se borra el mensaje). Todo se dibuja en /dev/tty; stdout solo lleva el resultado. `"^ "` y `"^@"` son la misma tecla en zsh. `keys.search` ya no existe (los config viejos con esa clave la ignoran).
+- Widget de `Ctrl-Space`: `pistasho ask --prompt --format zsh --initial "$BUFFER"` imprime `comando NUL mensaje NUL pregunta` (zsh conserva los NUL en `$(...)`); código 0 = hay comando, 1 = sin coincidencia (la salida es el mensaje), 130 = cancelado. El widget llama a `zle reset-prompt` y luego a `zle -M` (al revés se borra el mensaje). Todo se dibuja en /dev/tty; stdout solo lleva el resultado. `"^ "` y `"^@"` son la misma tecla en zsh. `keys.search` ya no existe (los config viejos con esa clave la ignoran).
+- Alternativas: el widget guarda `_PISTASHO_LAST_Q` y `_PISTASHO_LAST_CMD`; si `$BUFFER` sigue siendo exactamente el último comando, `Ctrl-Space` llama a `ask --alternatives --current "$BUFFER" -- "$_PISTASHO_LAST_Q"`; si no, es una pregunta nueva. Se borran en `zle-line-finish` (`add-zle-hook-widget`). La lista parte de los 20 mejores candidatos de BM25 (`ListMode::Alternatives`, índices en las entradas cargadas) con el comando actual seleccionado (`placeholders::matches_template` lo encuentra aunque ya esté relleno); con el filtro vacío muestran los candidatos, al escribir se busca en todo con el buscador difuso. `ask --explore` abre `ListMode::Explore`.
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia

@@ -6,7 +6,7 @@
 
 Presionas `Ctrl-Space` en zsh, escribes lo que quieres con tus palabras (en español o en inglés) y el mejor comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo. Busca entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, y todo se queda en tu máquina.
 
-Estado: **fase 2 en curso**. Las preguntas se responden en local con BM25 sobre un índice de texto completo. Después vienen las alternativas cuando la respuesta no es la correcta, los embeddings, instalar una herramienta que falta y los avisos de riesgo; Laya y el LLM de respaldo vienen más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
+Estado: **fase 2 en curso**. Las preguntas se responden en local con BM25 sobre un índice de texto completo, y un segundo `Ctrl-Space` muestra alternativas cuando la respuesta no es la correcta. Después vienen los embeddings, instalar una herramienta que falta y los avisos de riesgo; Laya y el LLM de respaldo vienen más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
 
 ## Instalación
 
@@ -32,6 +32,7 @@ pistasho init tmux >> ~/.tmux.conf
 | Dónde | Tecla | Qué hace |
 |---|---|---|
 | zsh | `Ctrl-Space` | Toma la línea del prompt (` ✦ pregunta `): escribes una pregunta, `Enter` deja el mejor comando en el prompt. El texto que ya había en el prompt pasa a ser la pregunta |
+| zsh | `Ctrl-Space` otra vez | ¿No era ese? Mientras el prompt siga con la respuesta, abre **otras opciones** para la misma pregunta: una línea de filtro y los candidatos. Escribir busca en todo, `Enter` reemplaza el comando, `Esc` lo deja |
 | pregunta | `Enter` | Resolver; si el comando tiene marcadores, pide sus valores |
 | pregunta | `Tab` (línea vacía) | Explorar todo: tus atajos, historial y tldr |
 | pregunta | `Esc` / `Ctrl-C` | Cancelar, el prompt queda como estaba |
