@@ -5,13 +5,14 @@
 //! rows, and cheats and history are re-synced whenever their files change.
 
 use crate::index::{Entry, Source};
+use crate::placeholders;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::time::Duration;
 
 /// Bump when the tables change; a different version resets the database.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// `description` and `uses` instead of `desc` and `count` to stay clear of SQL keywords.
 /// The FTS table is "external content": it indexes `entries` without copying it, and the
@@ -29,21 +30,22 @@ CREATE TABLE IF NOT EXISTS entries (
     tool        TEXT NOT NULL,
     source      TEXT NOT NULL,
     origin      TEXT NOT NULL,
-    uses        INTEGER NOT NULL DEFAULT 0
+    uses        INTEGER NOT NULL DEFAULT 0,
+    cmd_words   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS entries_source ON entries(source);
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-    description, alt, tool,
+    description, alt, tool, cmd_words,
     content = 'entries', content_rowid = 'id',
     tokenize = 'unicode61 remove_diacritics 2'
 );
 CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-    INSERT INTO entries_fts(rowid, description, alt, tool)
-    VALUES (new.id, new.description, new.alt, new.tool);
+    INSERT INTO entries_fts(rowid, description, alt, tool, cmd_words)
+    VALUES (new.id, new.description, new.alt, new.tool, new.cmd_words);
 END;
 CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, description, alt, tool)
-    VALUES ('delete', old.id, old.description, old.alt, old.tool);
+    INSERT INTO entries_fts(entries_fts, rowid, description, alt, tool, cmd_words)
+    VALUES ('delete', old.id, old.description, old.alt, old.tool, old.cmd_words);
 END;
 ";
 
@@ -126,18 +128,26 @@ impl Db {
         tx.execute("DELETE FROM entries WHERE source = ?1", [source.db_name()])?;
         {
             let mut insert = tx.prepare(
-                "INSERT INTO entries(cmd, description, alt, tool, source, origin, uses)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO entries(cmd, description, alt, tool, source, origin, uses, cmd_words)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for e in entries {
+                // history descriptions are generated labels ("used 3 times", in the UI
+                // language), not text worth searching, and are rebuilt on load anyway
+                let description = if e.source == Source::Hist {
+                    ""
+                } else {
+                    e.desc.as_str()
+                };
                 insert.execute(params![
                     e.cmd,
-                    e.desc,
+                    description,
                     e.alt,
                     e.tool,
                     e.source.db_name(),
                     e.origin,
-                    e.count
+                    e.count,
+                    placeholders::plain_words(&e.cmd)
                 ])?;
             }
         }
@@ -170,18 +180,30 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Full-text search ranked by BM25. Returns `(entry, score)`, best first; higher is better.
-    /// Not used by a command yet: `pistasho ask` (task 2.2) is its caller.
-    #[allow(dead_code)]
+    /// Full-text search of free text with the default weights; see [`Db::fts_search_words`].
+    #[cfg(test)]
     pub fn fts_search(&self, text: &str, limit: usize) -> Result<Vec<(Entry, f64)>> {
-        let Some(query) = fts_query(text) else {
+        self.fts_search_words(&words(text), limit, DEFAULT_WEIGHTS)
+    }
+
+    /// Full-text search ranked by BM25. Returns `(entry, score)`, best first; higher is better.
+    /// `weights` scale each indexed column (`description`, `alt`, `tool`, `cmd_words`).
+    pub fn fts_search_words(
+        &self,
+        words: &[String],
+        limit: usize,
+        weights: Weights,
+    ) -> Result<Vec<(Entry, f64)>> {
+        let Some(query) = fts_query_from_words(words) else {
             return Ok(Vec::new());
         };
+        let [w_desc, w_alt, w_tool, w_cmd] = weights;
+        let bm25 = format!("bm25(entries_fts, {w_desc}, {w_alt}, {w_tool}, {w_cmd})");
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {COLUMNS}, bm25(entries_fts) FROM entries_fts
+            "SELECT {COLUMNS}, {bm25} FROM entries_fts
              JOIN entries e ON e.id = entries_fts.rowid
              WHERE entries_fts MATCH ?1
-             ORDER BY bm25(entries_fts) LIMIT ?2"
+             ORDER BY {bm25} LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![query, limit as i64], |r| {
             // bm25() is lower-is-better (and negative); flip it
@@ -203,28 +225,50 @@ fn row_to_entry(r: &rusqlite::Row) -> rusqlite::Result<Entry> {
     })
 }
 
-/// Light stemming for prefix search: words of up to 4 characters are kept whole, longer ones
-/// lose their last 3 (never going below 4). That is enough for `comprimir` → `compri` to reach
+/// Light stemming for prefix search: words of up to 6 characters are kept whole, longer ones
+/// lose their last 3 (never going below 6). That is enough for `comprimir` → `compri` to reach
 /// `comprime` / `comprimido`, and `compresión` → `compres` to reach `compression` and
-/// `compress`, in Spanish and English alike. The cut is a heuristic to tune with `pistasho eval`.
-#[allow(dead_code)] // used through `fts_query`, which `pistasho ask` (task 2.2) will call
+/// `compress`, in Spanish and English alike. Chosen with `pistasho eval --mode bm25` over a
+/// grid of cuts and minimums (docs/eval.md); shorter minimums were worse because short
+/// prefixes match unrelated tool names.
 fn stem_prefix(word: &str) -> String {
+    const CUT: usize = 3;
+    const MIN_KEEP: usize = 6;
     let n = word.chars().count();
-    let keep = if n <= 4 { n } else { (n - 3).max(4) };
+    let keep = if n <= MIN_KEEP { n } else { (n - CUT).max(MIN_KEEP) };
     word.chars().take(keep).collect()
 }
 
-/// Turns free text into an FTS5 query: every word becomes a quoted, stemmed prefix term
-/// (`"compri"*`), joined with OR so BM25 ranks the entries that match the most words first.
-/// Punctuation is dropped, which also keeps user input from being read as FTS5 syntax.
-#[allow(dead_code)] // see `stem_prefix`
-pub fn fts_query(text: &str) -> Option<String> {
-    let terms: Vec<String> = text
-        .split(|c: char| !c.is_alphanumeric())
+/// Weights of the BM25 columns: `description`, `alt`, `tool`, `cmd_words`.
+pub type Weights = [f64; 4];
+
+/// From a grid over 101 questions (docs/eval.md): description 3, alt 2, tool 4, command words 2.
+/// The surface is flat (BM25 is not very sensitive to these), so do not chase decimals.
+pub const DEFAULT_WEIGHTS: Weights = [3.0, 2.0, 4.0, 2.0];
+
+/// Lowercase alphanumeric words of free text, in order.
+pub fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(|w| format!("\"{}\"*", stem_prefix(&w.to_lowercase())))
-        .collect();
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Turns words into an FTS5 query: each one becomes a quoted, stemmed prefix term (`"compri"*`),
+/// joined with OR so BM25 ranks the entries that match the most words first. The words come
+/// from [`words`], so punctuation (and with it any FTS5 syntax in the user's text) is gone.
+///
+/// Prefix matching applies to every column, tool names included. Restricting the tool column to
+/// exact matches looked better on 40 questions and worse on 100 (top-3 50% → 39%): partial tool
+/// names are how `dock` or `compose` reach `docker-compose`.
+pub fn fts_query_from_words(words: &[String]) -> Option<String> {
+    let terms: Vec<String> = words.iter().map(|w| format!("\"{}\"*", stem_prefix(w))).collect();
     (!terms.is_empty()).then(|| terms.join(" OR "))
+}
+
+#[cfg(test)]
+pub fn fts_query(text: &str) -> Option<String> {
+    fts_query_from_words(&words(text))
 }
 
 #[cfg(test)]
@@ -284,7 +328,7 @@ mod tests {
     fn builds_fts_queries() {
         assert_eq!(
             fts_query("Comprimir carpeta"),
-            Some("\"compri\"* OR \"carp\"*".into())
+            Some("\"compri\"* OR \"carpet\"*".into())
         );
         assert_eq!(fts_query("compresión"), Some("\"compres\"*".into()));
         assert_eq!(
@@ -398,7 +442,8 @@ mod tests {
     fn stems_words() {
         assert_eq!(stem_prefix("ip"), "ip");
         assert_eq!(stem_prefix("kill"), "kill");
-        assert_eq!(stem_prefix("sockets"), "sock");
+        assert_eq!(stem_prefix("puerto"), "puerto");
+        assert_eq!(stem_prefix("sockets"), "socket");
         assert_eq!(stem_prefix("directorio"), "directo");
         assert_eq!(stem_prefix("comprimir"), "compri");
         assert_eq!(stem_prefix("compresión"), "compres");

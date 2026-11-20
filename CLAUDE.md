@@ -29,6 +29,7 @@ src/
   i18n.rs          idioma de la interfaz (en por defecto, es o auto): `tr("English", "Español")`, `PISTASHO_LANG`
   config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
   db.rs            SQLite (`~/.local/share/pistasho/pistasho.db`): `entries`, `entries_fts` (FTS5, BM25, `remove_diacritics 2`), `meta`; `fts_query` con stemming ligero
+  ask.rs           `pistasho ask`: palabras vacías, BM25 (`db::fts_search_words`), boost de mío / historial, dedupe por forma del comando
   index.rs         Entry/Source; tldr desde zip → db; cheats.toml e historial se resincronizan por huella (mtime + tamaño) al abrir
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
@@ -36,8 +37,8 @@ src/
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40); busca por prefijos (solo reevalúa lo que ya coincidía), en hilos, y solo en los primeros 150 caracteres de `alt`
   tui.rs           ratatui en /dev/tty: lista de candidatos (modos alternativas / explorar) + relleno de marcadores, en línea debajo del prompt. Hoy sigue siendo el buscador de `Ctrl-G`; refactor en la tarea 2.3b
   shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Hoy aún genera el widget de `Ctrl-G`; se reemplaza en la tarea 2.3a
-  eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml
-eval/questions.toml   40 preguntas en español con sus herramientas correctas (meta: unas 100); claves `question` / `tools`
+  eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml; `--mode fuzzy|bm25`, `--weights`
+eval/questions.toml   101 preguntas en español con sus herramientas correctas (40 originales + 61 genéricas); claves `question` / `tools`
 examples/cheats.toml
 ```
 
@@ -129,7 +130,9 @@ El usuario pidió que todo sea configurable **desde la primera ejecución**, con
 ```sh
 cargo build && cargo clippy --all-targets && cargo test
 cargo run -- query comprimir carpeta        # búsqueda sin interfaz
-cargo run -- eval                           # precisión sobre eval/questions.toml
+cargo run -- eval                           # precisión (BM25) sobre eval/questions.toml
+cargo run -- eval --mode fuzzy              # la línea base de la fase 1
+cargo run -- ask comprimir una carpeta      # la mejor respuesta; --json -n 5 para ver candidatos
 cargo run --release -- query --timing tar czf   # tiempos de apertura y por tecla (medir siempre en release)
 cargo run -- init zsh                       # revisar el widget generado
 ```

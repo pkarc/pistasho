@@ -151,24 +151,34 @@ fn merge_page(
     let ordered: Vec<&tldr::Page> = langs.iter().filter_map(|l| by_lang.get(l)).collect();
     let summaries: Vec<&str> = ordered.iter().map(|p| p.summary.as_str()).collect();
 
-    // normalized command -> descriptions in language order
-    let mut order: Vec<String> = Vec::new();
-    let mut descs: HashMap<String, Vec<String>> = HashMap::new();
+    // The same example in another language differs from the first one only in the names of its
+    // placeholders, so examples are matched across languages by the command's shape plus how
+    // many times that shape has already appeared in the page (two examples may share a shape).
+    // The displayed command is the one from the first language that has it.
+    let mut order: Vec<(String, usize)> = Vec::new();
+    let mut cmds: HashMap<(String, usize), String> = HashMap::new();
+    let mut descs: HashMap<(String, usize), Vec<String>> = HashMap::new();
     for page in &ordered {
+        let mut seen: HashMap<String, usize> = HashMap::new();
         for ex in &page.examples {
             let cmd = placeholders::normalize_tldr(&ex.cmd);
-            let list = descs.entry(cmd.clone()).or_insert_with(|| {
-                order.push(cmd.clone());
-                Vec::new()
-            });
-            list.push(ex.desc.clone());
+            let shape = placeholders::shape(&cmd);
+            let nth = seen.entry(shape.clone()).or_insert(0);
+            let key = (shape, *nth);
+            *nth += 1;
+            if !cmds.contains_key(&key) {
+                order.push(key.clone());
+                cmds.insert(key.clone(), cmd);
+            }
+            descs.entry(key).or_default().push(ex.desc.clone());
         }
     }
 
     order
         .into_iter()
-        .map(|cmd| {
-            let d = descs.remove(&cmd).unwrap_or_default();
+        .map(|key| {
+            let cmd = cmds.remove(&key).unwrap_or_default();
+            let d = descs.remove(&key).unwrap_or_default();
             let desc = d.first().cloned().unwrap_or_default();
             let mut alt: Vec<&str> = d.iter().skip(1).map(String::as_str).collect();
             alt.extend(summaries.iter().copied());
@@ -250,6 +260,13 @@ pub fn add_cheat(cheat: Cheat) -> Result<std::path::PathBuf> {
 
 // ---------------------------------------------------------------- history
 
+/// A history line that runs pistasho itself (`pistasho ask ...`, `~/.cargo/bin/pistasho search`).
+/// It contains exactly the words of whatever was asked, so left in it answers a question with
+/// the previous time it was asked.
+fn is_pistasho_call(cmd: &str) -> bool {
+    first_word(cmd).rsplit('/').next() == Some("pistasho")
+}
+
 pub fn load_history(cfg: &Config) -> Vec<Entry> {
     if !cfg.history {
         return Vec::new();
@@ -262,6 +279,7 @@ pub fn load_history(cfg: &Config) -> Vec<Entry> {
     };
     history::load(&bytes, cfg.history_limit)
         .into_iter()
+        .filter(|h| !is_pistasho_call(&h.cmd))
         .map(|h| {
             let (desc, origin) = history_labels(h.count);
             Entry {
@@ -296,10 +314,16 @@ pub struct Index {
     pub has_tldr: bool,
 }
 
+/// Opens the database with the cheats and history rows brought up to date.
+pub fn open_synced(cfg: &Config) -> Result<Db> {
+    let mut db = Db::open(&config::db_path()?)?;
+    sync(&mut db, cfg)?;
+    Ok(db)
+}
+
 impl Index {
     pub fn load(cfg: &Config) -> Result<Self> {
-        let mut db = Db::open(&config::db_path()?)?;
-        sync(&mut db, cfg)?;
+        let db = open_synced(cfg)?;
         let mut entries = db.load_all()?;
         for e in entries.iter_mut().filter(|e| e.source == Source::Hist) {
             (e.desc, e.origin) = history_labels(e.count);
@@ -345,4 +369,102 @@ fn sync(db: &mut Db, cfg: &Config) -> Result<()> {
         db.replace_source(Source::Hist, &load_history(cfg), &[("history_fp", &history_fp)])?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tldr::{Example, Page};
+
+    fn page(summary: &str, examples: &[(&str, &str)]) -> Page {
+        Page {
+            name: "tar".into(),
+            summary: summary.into(),
+            examples: examples
+                .iter()
+                .map(|(desc, cmd)| Example {
+                    desc: desc.to_string(),
+                    cmd: cmd.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    fn by_lang(en: Page, es: Page) -> HashMap<String, Page> {
+        HashMap::from([("en".to_string(), en), ("es".to_string(), es)])
+    }
+
+    /// The same example in two languages differs only in its placeholder names. It must become
+    /// one entry (English command and description, Spanish description searchable in `alt`),
+    /// not two.
+    #[test]
+    fn translations_join_despite_translated_placeholders() {
+        let pages = by_lang(
+            page(
+                "Archiving utility.",
+                &[
+                    (
+                        "Create an archive",
+                        "tar cf {{path/to/target.tar}} {{path/to/file}}",
+                    ),
+                    ("Extract an archive", "tar xf {{path/to/source.tar}}"),
+                ],
+            ),
+            page(
+                "Utilidad de archivado.",
+                &[
+                    (
+                        "Crea un archivo",
+                        "tar cf {{ruta/al/destino.tar}} {{ruta/al/archivo}}",
+                    ),
+                    ("Extrae un archivo", "tar xf {{ruta/al/origen.tar}}"),
+                ],
+            ),
+        );
+        let langs = vec!["en".to_string(), "es".to_string()];
+        let entries = merge_page("common", "tar", &pages, &langs);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].cmd, "tar cf {{path/to/target.tar}} {{path/to/file}}");
+        assert_eq!(entries[0].desc, "Create an archive");
+        assert!(entries[0].alt.contains("Crea un archivo"), "{}", entries[0].alt);
+        assert!(entries[0].alt.contains("Utilidad de archivado."));
+    }
+
+    #[test]
+    fn pistasho_calls_are_not_history_material() {
+        assert!(is_pistasho_call("pistasho ask comprimir una carpeta"));
+        assert!(is_pistasho_call("sudo pistasho search"));
+        assert!(is_pistasho_call("/home/u/.cargo/bin/pistasho eval --mode bm25"));
+        assert!(!is_pistasho_call("git commit -m 'pistasho ask'"));
+        assert!(!is_pistasho_call("cargo run -- ask"));
+        assert!(!is_pistasho_call(""));
+    }
+
+    /// Two examples with the same shape in one language stay two entries.
+    #[test]
+    fn same_shape_twice_in_a_page_is_not_collapsed() {
+        let pages = by_lang(
+            page("x", &[("First", "cp {{a}} {{b}}"), ("Second", "cp {{c}} {{d}}")]),
+            page(
+                "x",
+                &[("Primero", "cp {{a}} {{b}}"), ("Segundo", "cp {{c}} {{d}}")],
+            ),
+        );
+        let langs = vec!["en".to_string(), "es".to_string()];
+        let entries = merge_page("common", "cp", &pages, &langs);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].desc, "Second");
+        assert!(entries[1].alt.contains("Segundo"));
+    }
+
+    #[test]
+    fn only_the_requested_languages_are_used() {
+        let pages = by_lang(
+            page("x", &[("One", "ls {{a}}")]),
+            page("x", &[("Uno", "ls {{b}}")]),
+        );
+        let entries = merge_page("common", "ls", &pages, &["es".to_string()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].desc, "Uno");
+    }
 }

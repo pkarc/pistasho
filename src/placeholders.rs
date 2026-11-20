@@ -109,6 +109,36 @@ fn option_long_form(inner: &str) -> Option<String> {
     Some(alts.last().unwrap().to_string())
 }
 
+/// The command with every placeholder name erased (`{{}}`). The same tldr example in two
+/// languages differs only in those names (`{{path/to/file}}` vs `{{ruta/al/archivo}}`), so this
+/// is what identifies it across translations.
+pub fn shape(cmd: &str) -> String {
+    parse(cmd)
+        .into_iter()
+        .map(|p| match p {
+            Part::Text(t) => t,
+            Part::Placeholder(_) => "{{}}".to_string(),
+        })
+        .collect()
+}
+
+/// The command without its `{{placeholders}}`: what is left to search by (`tar czf --directory .`).
+/// Placeholder names like `path/to/file` appear in almost every tldr command and would drown
+/// out the words that tell commands apart.
+pub fn plain_words(cmd: &str) -> String {
+    parse(cmd)
+        .into_iter()
+        .filter_map(|p| match p {
+            Part::Text(t) => Some(t),
+            Part::Placeholder(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Short name to show in the fill-in prompt: `path/to/file` → `file`.
 pub fn display_name(name: &str) -> &str {
     let n = name.trim_end_matches("...").trim();
@@ -157,6 +187,27 @@ mod tests {
         );
         // a normal bracketed placeholder is left alone
         assert_eq!(normalize_tldr("echo {{[text]}}"), "echo {{[text]}}");
+    }
+
+    #[test]
+    fn shape_ignores_placeholder_names() {
+        assert_eq!(
+            shape("tar czf {{path/to/file}}.tar.gz {{dir}}"),
+            shape("tar czf {{ruta/al/archivo}}.tar.gz {{carpeta}}")
+        );
+        assert_eq!(shape("tar czf {{a}}"), "tar czf {{}}");
+        assert_ne!(shape("tar czf {{a}}"), shape("tar xzf {{a}}"));
+        assert_eq!(shape("ls"), "ls");
+    }
+
+    #[test]
+    fn plain_words_drops_placeholders() {
+        assert_eq!(
+            plain_words("tar czf {{path/to/target.tar.gz}} --directory {{dir}} ."),
+            "tar czf --directory ."
+        );
+        assert_eq!(plain_words("ls"), "ls");
+        assert_eq!(plain_words("{{only}}"), "");
     }
 
     #[test]

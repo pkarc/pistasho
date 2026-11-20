@@ -51,7 +51,8 @@ pistasho update                                           # downloads tldr and r
 pistasho add 'fuser -k {{port}}/tcp' -d 'Kill the process on a port' -t net
 pistasho init zsh | tmux
 pistasho config
-pistasho eval eval/questions.toml                         # measures searcher accuracy
+pistasho ask how do I compress a folder                    # best command for a question (--json -n 5: candidates)
+pistasho eval eval/questions.toml [--mode fuzzy|bm25]     # measures searcher accuracy
 ```
 
 ### Searcher height

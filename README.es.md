@@ -51,7 +51,8 @@ pistasho update                                             # descarga tldr y re
 pistasho add 'fuser -k {{puerto}}/tcp' -d 'Matar el proceso de un puerto' -t red
 pistasho init zsh | tmux
 pistasho config
-pistasho eval eval/questions.toml                           # mide la precisión del buscador
+pistasho ask cómo comprimo una carpeta                     # mejor comando para una pregunta (--json -n 5: candidatos)
+pistasho eval eval/questions.toml [--mode fuzzy|bm25]       # mide la precisión del buscador
 ```
 
 ### Alto del buscador

@@ -1,3 +1,4 @@
+mod ask;
 mod config;
 mod db;
 mod eval;
@@ -77,6 +78,22 @@ enum Command {
     Eval {
         #[arg(default_value = "eval/questions.toml")]
         file: PathBuf,
+        /// Which ranker to measure
+        #[arg(long, value_enum, default_value_t = eval::Mode::Bm25)]
+        mode: eval::Mode,
+        /// BM25 column weights for tuning: description,alt,tool,cmd (e.g. 3,1,5,1.5)
+        #[arg(long, value_delimiter = ',')]
+        weights: Option<Vec<f64>>,
+    },
+    /// Turns a question into the best command (prints only the command)
+    Ask {
+        question: Vec<String>,
+        /// Print the ranked candidates as JSON, with their scores, instead of just the best one
+        #[arg(long)]
+        json: bool,
+        /// How many candidates to include with --json
+        #[arg(short = 'n', long, default_value_t = 10)]
+        limit: usize,
     },
 }
 
@@ -203,11 +220,62 @@ fn run() -> Result<ExitCode> {
             );
             Ok(ExitCode::SUCCESS)
         }
-        Command::Eval { file } => {
+        Command::Eval { file, mode, weights } => {
             let cfg = Config::load()?;
             let idx = Index::load(&cfg)?;
-            eval::run(&file, &idx.entries)?;
+            let db = index::open_synced(&cfg)?;
+            let weights = match weights {
+                None => None,
+                Some(w) if w.len() == 4 => Some([w[0], w[1], w[2], w[3]]),
+                Some(_) => anyhow::bail!(tr(
+                    "--weights needs 4 comma-separated numbers: description,alt,tool,cmd",
+                    "--weights necesita 4 números separados por comas: description,alt,tool,cmd"
+                )),
+            };
+            eval::run(&file, mode, &idx.entries, &db, weights)?;
             Ok(ExitCode::SUCCESS)
+        }
+        Command::Ask {
+            question,
+            json,
+            limit,
+        } => {
+            let cfg = Config::load()?;
+            let db = index::open_synced(&cfg)?;
+            let question = question.join(" ");
+            let candidates = ask::ask(&db, &question, if json { limit } else { 1 })?;
+            if json {
+                let out = serde_json::json!({
+                    "question": question,
+                    "terms": ask::terms(&question),
+                    "candidates": candidates.iter().map(|c| serde_json::json!({
+                        "command": c.entry.cmd,
+                        "description": c.entry.desc,
+                        "tool": c.entry.tool,
+                        "source": c.entry.source.db_name(),
+                        "origin": c.entry.origin,
+                        "score": c.score,
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                return Ok(ExitCode::SUCCESS);
+            }
+            match candidates.first() {
+                Some(best) => {
+                    println!("{}", best.entry.cmd);
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => {
+                    eprintln!(
+                        "pistasho: {}",
+                        tr(
+                            "no match for that question",
+                            "ninguna coincidencia para esa pregunta"
+                        )
+                    );
+                    Ok(ExitCode::from(1))
+                }
+            }
         }
     }
 }

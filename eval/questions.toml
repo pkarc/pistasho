@@ -170,3 +170,250 @@ tools = ["ffmpeg"]
 [[q]]
 question = "ver información del cpu"
 tools = ["lscpu", "nproc"]
+
+# --- Added with task 2.2: generic Linux tasks so the measurement is less noisy. ---
+# Replace or extend with commands you really use (see task 1.4).
+
+[[q]]
+question = "ver la memoria libre del sistema"
+tools = ["free", "vmstat", "top", "htop"]
+
+[[q]]
+question = "ver el espacio libre en disco"
+tools = ["df", "du"]
+
+[[q]]
+question = "listar archivos con detalles"
+tools = ["ls", "eza", "exa"]
+
+[[q]]
+question = "crear un directorio y sus padres"
+tools = ["mkdir"]
+
+[[q]]
+question = "borrar una carpeta con todo su contenido"
+tools = ["rm"]
+
+[[q]]
+question = "copiar una carpeta completa"
+tools = ["cp", "rsync"]
+
+[[q]]
+question = "mover o renombrar un archivo"
+tools = ["mv"]
+
+[[q]]
+question = "ver el contenido de un archivo"
+tools = ["cat", "less", "bat", "more"]
+
+[[q]]
+question = "ver las primeras líneas de un archivo"
+tools = ["head"]
+
+[[q]]
+question = "crear un enlace simbólico"
+tools = ["ln"]
+
+[[q]]
+question = "probar si un servidor responde"
+tools = ["ping", "curl", "nc"]
+
+[[q]]
+question = "ver la ruta hacia un servidor"
+tools = ["traceroute", "mtr", "tracepath"]
+
+[[q]]
+question = "consultar el dns de un dominio"
+tools = ["dig", "nslookup", "host"]
+
+[[q]]
+question = "ver las conexiones de red activas"
+tools = ["ss", "netstat", "lsof"]
+
+[[q]]
+question = "abrir un puerto en el firewall"
+tools = ["ufw", "iptables", "firewall-cmd", "nft"]
+
+[[q]]
+question = "ver qué proceso consume más cpu"
+tools = ["top", "htop", "ps", "btop"]
+
+[[q]]
+question = "terminar un proceso por su pid"
+tools = ["kill"]
+
+[[q]]
+question = "dejar un comando corriendo aunque cierre la terminal"
+tools = ["nohup", "screen", "tmux"]
+
+[[q]]
+question = "ver el log del sistema"
+tools = ["journalctl", "dmesg"]
+
+[[q]]
+question = "ver los mensajes del kernel"
+tools = ["dmesg", "journalctl"]
+
+[[q]]
+question = "cuánto tiempo lleva encendido el sistema"
+tools = ["uptime"]
+
+[[q]]
+question = "ver la versión del kernel"
+tools = ["uname", "hostnamectl", "lsb_release"]
+
+[[q]]
+question = "listar los discos y particiones"
+tools = ["lsblk", "fdisk", "blkid", "parted"]
+
+[[q]]
+question = "ver los usuarios conectados"
+tools = ["who", "w", "last"]
+
+[[q]]
+question = "crear un usuario nuevo"
+tools = ["useradd", "adduser"]
+
+[[q]]
+question = "cambiar la contraseña de un usuario"
+tools = ["passwd", "chpasswd"]
+
+[[q]]
+question = "agregar un usuario a un grupo"
+tools = ["usermod", "gpasswd", "adduser"]
+
+[[q]]
+question = "instalar un paquete en ubuntu"
+tools = ["apt", "apt-get", "dpkg"]
+
+[[q]]
+question = "actualizar todos los paquetes del sistema"
+tools = ["apt", "apt-get", "dnf", "pacman"]
+
+[[q]]
+question = "clonar un repositorio de git"
+tools = ["git", "git-clone"]
+
+[[q]]
+question = "ver los cambios sin confirmar en git"
+tools = ["git", "git-diff", "git-status"]
+
+[[q]]
+question = "deshacer el último commit"
+tools = ["git", "git-reset", "git-revert"]
+
+[[q]]
+question = "crear una rama nueva en git"
+tools = ["git", "git-branch", "git-checkout", "git-switch"]
+
+[[q]]
+question = "ver los commits recientes"
+tools = ["git", "git-log"]
+
+[[q]]
+question = "guardar cambios temporalmente en git"
+tools = ["git", "git-stash"]
+
+[[q]]
+question = "construir una imagen de docker"
+tools = ["docker", "docker-build", "podman-build"]
+
+[[q]]
+question = "entrar a un contenedor en ejecución"
+tools = ["docker", "docker-exec", "docker-container-exec", "podman-exec"]
+
+[[q]]
+question = "ver los logs de un contenedor"
+tools = ["docker", "docker-logs", "docker-container-logs"]
+
+[[q]]
+question = "levantar servicios con docker compose"
+tools = ["docker-compose", "docker", "docker-compose-up"]
+
+[[q]]
+question = "convertir un video a mp3"
+tools = ["ffmpeg"]
+
+[[q]]
+question = "descargar un video de youtube"
+tools = ["yt-dlp", "youtube-dl"]
+
+[[q]]
+question = "extraer un archivo tar.gz"
+tools = ["tar"]
+
+[[q]]
+question = "calcular el hash sha256 de un archivo"
+tools = ["sha256sum", "shasum", "openssl"]
+
+[[q]]
+question = "cambiar los permisos de un archivo"
+tools = ["chmod"]
+
+[[q]]
+question = "buscar archivos modificados en los últimos días"
+tools = ["find"]
+
+[[q]]
+question = "contar las palabras de un archivo"
+tools = ["wc"]
+
+[[q]]
+question = "ordenar las líneas de un archivo"
+tools = ["sort"]
+
+[[q]]
+question = "mostrar columnas específicas de un texto"
+tools = ["awk", "cut"]
+
+[[q]]
+question = "ver el historial de comandos"
+tools = ["history", "fc"]
+
+[[q]]
+question = "medir cuánto tarda un comando"
+tools = ["time", "hyperfine"]
+
+[[q]]
+question = "ver la fecha y la hora"
+tools = ["date", "timedatectl"]
+
+[[q]]
+question = "apagar o reiniciar el sistema"
+tools = ["shutdown", "reboot", "systemctl", "poweroff"]
+
+[[q]]
+question = "habilitar un servicio al arrancar"
+tools = ["systemctl"]
+
+[[q]]
+question = "ver los discos montados"
+tools = ["mount", "df", "findmnt", "lsblk"]
+
+[[q]]
+question = "encriptar un archivo"
+tools = ["gpg", "openssl", "age", "7z"]
+
+[[q]]
+question = "ver la temperatura del equipo"
+tools = ["sensors"]
+
+[[q]]
+question = "listar los paquetes instalados"
+tools = ["dpkg", "apt", "rpm", "pacman"]
+
+[[q]]
+question = "hacer un túnel ssh"
+tools = ["ssh"]
+
+[[q]]
+question = "cortar un archivo grande en partes"
+tools = ["split"]
+
+[[q]]
+question = "comparar dos carpetas"
+tools = ["diff", "rsync", "meld"]
+
+[[q]]
+question = "mostrar el árbol de procesos"
+tools = ["pstree", "ps", "htop"]

@@ -55,3 +55,33 @@ Límites conocidos:
 | Tamaño en disco | 10.9 MB | 15.9 MB (incluye el índice de texto completo) |
 
 El ranking FTS5 / BM25 aún no se mide con `eval`: lo usa `pistasho ask`, que es la tarea 2.2. Primer vistazo sobre la base real (consultas armadas con `fts_query`): `compresión` → `compress`, `lzop`; `comprimir carpeta` → `carp`; `puertos escuchando` → `rcat`, `mysqld`, `socat` (ruido). Con palabras vacías y pesos por columna esto debería mejorar; se mide en 2.2.
+
+## Tarea 2.2 · `pistasho ask` con BM25 (2026-11-19)
+
+**Conjunto de preguntas.** Con 40 preguntas una pregunta vale 2.5 puntos y las comparaciones eran ruido (una variante parecía mejorar el top-3 de 38% a 30% y en realidad era al revés). Se amplió `eval/questions.toml` a **101** con 61 tareas genéricas de Linux. Las 40 originales se siguen midiendo aparte como referencia de la línea base de la fase 1. Ninguna de las 61 nuevas son comandos "reales del usuario" todavía (tarea 1.4, continua).
+
+### Resultado
+
+| Conjunto | Difuso (fase 1) | BM25 (`ask`) |
+|---|---|---|
+| 40 originales (línea base de la 1.4) | 18% / 28% | **28% / 45%** |
+| 101 preguntas | 28% / 41% | **37% / 51%** |
+
+(top-1 / top-3). Sobre la línea base de la fase 1 son +10 puntos de top-1 y +17 de top-3. `ask` tarda lo que un proceso en arrancar (≈ 0 s medibles, sin cargar todas las entradas en memoria).
+
+### Qué se probó y qué decidió
+
+Todo con `pistasho eval --mode bm25` (y `--weights` para los pesos), en rejillas de 84, 324 y 108 configuraciones:
+
+| Decisión | Resultado |
+|---|---|
+| Prefijo también sobre el nombre de la herramienta | **Sí.** Restringir la herramienta a coincidencia exacta parecía mejor con 40 preguntas y fue peor con 101 (top-3 50% → 39%). |
+| Raíz de las palabras: dejar enteras las de hasta 6 letras, recortar 3 a las más largas | **Elegido.** Mínimos más cortos (4–5) fueron peores: los prefijos cortos coinciden con herramientas sin relación (`carpeta` → `carp`, `partición` → `particle`). |
+| Pesos de columnas (`description`, `alt`, `tool`, `cmd_words`) | **3, 2, 4, 2.** La superficie es plana: la mediana de la rejilla es 83 (top-1 + top-3) y el mejor punto 88. No tiene sentido buscar decimales. |
+| Indexar las palabras del comando sin `{{marcadores}}` (`cmd_words`) | Necesario para el historial: `ssh root@host` solo se encontraría por `ssh`, nunca por `root`. |
+| Unir las traducciones por la **forma** del comando (sin los nombres de los marcadores) | Quitó ~4000 ejemplos duplicados (34 878 → 30 932 de tldr) y deja el texto en español en `alt` en vez de en una entrada aparte. |
+| Palabras vacías (español e inglés) | Sin medir por separado; evitan que "qué es eso" encuentre algo. |
+
+### Qué falla todavía
+
+Los fallos restantes son sobre todo la **distancia semántica español → descripción en inglés** que BM25 no puede salvar: `montar una partición` (→ `mount`), `formatear una usb en ext4` (→ `mkfs`), `contar líneas` (→ `wc`), `ver logs de un servicio` (→ `journalctl`). Eso es lo que atacan los embeddings de la 2.9. El segundo grupo es ruido de palabras muy frecuentes (`archivos`, `texto`) que coinciden con descripciones cortas (`patool`). Los pesos por columna no lo arreglan; son candidatos a probar con los embeddings.
