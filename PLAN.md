@@ -13,7 +13,7 @@ Reglas para todas las tareas:
 
 ## Fase 1 · Cierre del buscador
 
-### [ ] 1.1 Compilar y corregir · S
+### [x] 1.1 Compilar y corregir · S
 El código nunca se compiló con sus dependencias.
 - `cargo build`, corregir errores de API (ratatui 0.29, nucleo-matcher 0.3, ureq 2, zip 2, clap 4).
 - Si una versión fijada da problemas, actualizarla y anotarlo.
@@ -199,3 +199,5 @@ El código nunca se compiló con sus dependencias.
 ## Notas
 
 <!-- Anota aquí decisiones o cambios de plan, con fecha. -->
+
+- 2026-11-19 · 1.1: compiló a la primera con las versiones fijadas, sin errores de API ni cambios de versión. Único ajuste: warning `unnecessary_sort_by` de clippy en `history.rs`. Se versionó `Cargo.lock` (es un binario). CI en verde. `cargo install` deja el binario en `~/.cargo/bin`, que no estaba en el `PATH`.
