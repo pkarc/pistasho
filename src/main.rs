@@ -1,3 +1,4 @@
+mod alternatives;
 mod ask;
 mod config;
 mod db;
@@ -328,6 +329,7 @@ fn run() -> Result<ExitCode> {
                         "missing": c.missing,
                         "renames": c.renames,
                         "install": c.missing.first().and_then(|bin| install_json(bin)),
+                        "alternative": alternatives::alternative_for(&c.entry.cmd, &c.missing),
                     })).collect::<Vec<_>>(),
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
@@ -423,6 +425,8 @@ enum Install {
     NotNeeded,
     /// Installed just now. The text says so for the message under the prompt.
     Done(String),
+    /// The user chose the alternative: this command replaces the answer, nothing is installed.
+    Alternative(String),
     /// The user declined in the box.
     Cancelled,
     /// The install ran and failed, or the program is still not there afterwards.
@@ -444,26 +448,40 @@ fn offer_install(cfg: &Config, command: &str) -> Result<Install> {
     if missing.is_empty() {
         return Ok(Install::NotNeeded);
     }
-    let Some(plan) = packages::plan_install_for(&missing) else {
+    let plan = packages::plan_install_for(&missing);
+    let alternative = alternatives::alternative_for(command, &missing);
+    if plan.is_none() && alternative.is_none() {
+        // nothing to offer: the message under the prompt warns about what is missing
         return Ok(Install::NotNeeded);
-    };
-    let system_line = match packages::detect_os() {
-        Some(os) if !os.pretty_name.is_empty() => format!("{} · {}", os.pretty_name, plan.manager.name()),
-        _ => plan.manager.name().to_string(),
+    }
+    let manager = plan
+        .as_ref()
+        .map(|p| p.manager)
+        .or_else(packages::Manager::detect);
+    let system_line = match (packages::detect_os(), manager) {
+        (Some(os), Some(m)) if !os.pretty_name.is_empty() => format!("{} · {}", os.pretty_name, m.name()),
+        (Some(os), None) if !os.pretty_name.is_empty() => os.pretty_name,
+        (_, Some(m)) => m.name().to_string(),
+        _ => tr("unknown system", "sistema desconocido").to_string(),
     };
     let info = tui::InstallBox {
         command: packages::adapt(command).command,
         system: system_line,
-        install: plan.display(),
+        install: plan.as_ref().map(|p| p.display()),
         missing: missing.clone(),
-        // 2.7: an alternative made of programs that are already installed
-        alternative: false,
+        alternative,
     };
-    match tui::confirm_install(&info)? {
+    let plan = match tui::confirm_install(&info)? {
         tui::InstallChoice::Cancel => return Ok(Install::Cancelled),
-        tui::InstallChoice::Alternative => return Ok(Install::NotNeeded),
-        tui::InstallChoice::Install => {}
-    }
+        tui::InstallChoice::Alternative => {
+            return Ok(info.alternative.map_or(Install::NotNeeded, Install::Alternative));
+        }
+        // the box only lets `y` through when there is a plan
+        tui::InstallChoice::Install => match plan {
+            Some(plan) => plan,
+            None => return Ok(Install::NotNeeded),
+        },
+    };
 
     prompt::say(&format!("$ {}", plan.display()))?;
     let failed = tr("✗ installation failed", "✗ falló la instalación");
@@ -531,16 +549,15 @@ fn ask_on_prompt(
                 }
                 return Ok(no_match(format));
             };
-            let message = found_message(
-                best.entry.source.tag(),
-                &best.entry.tool,
-                started.elapsed().as_millis(),
-                more,
-            );
+            // how long resolving took, taken now: the box below waits for the user
+            let resolved_ms = started.elapsed().as_millis();
+            let mut message = found_message(best.entry.source.tag(), &best.entry.tool, resolved_ms, more);
+            let mut alternative: Option<String> = None;
             if !best.missing.is_empty() {
                 match offer_install(cfg, &best.entry.cmd)? {
                     Install::NotNeeded => {}
                     Install::Cancelled => return Ok(ExitCode::from(130)),
+                    Install::Alternative(command) => alternative = Some(command),
                     Install::Done(note) => {
                         printed = true;
                         if send_to.is_some() {
@@ -562,17 +579,28 @@ fn ask_on_prompt(
                     }
                 }
             }
-            let command = if send_to.is_some() {
+            // the alternative stands in for the answer: same steps, its own command
+            let chosen_alternative = alternative.is_some();
+            if chosen_alternative {
+                message = format!(
+                    "⚡ {} · {} · {} ms",
+                    tr("alternative", "alternativa"),
+                    tr("no install", "sin instalar"),
+                    resolved_ms
+                );
+            }
+            let template = alternative.unwrap_or_else(|| best.entry.cmd.clone());
+            let command = if send_to.is_some() && !chosen_alternative {
                 match pick_alternative(cfg, &question, &best.entry.cmd, true)? {
                     None => return Ok(ExitCode::from(130)),
                     Some((cmd, _origin)) => cmd,
                 }
-            } else if placeholders::has_placeholders(&best.entry.cmd) {
+            } else if placeholders::has_placeholders(&template) {
                 let options = tui::Options {
                     initial_query: String::new(),
                     fill: true,
                     height,
-                    start_fill: Some(best.entry.cmd.clone()),
+                    start_fill: Some(template),
                     mode: tui::ListMode::Explore,
                 };
                 match tui::run(&[], options)? {
@@ -580,7 +608,7 @@ fn ask_on_prompt(
                     tui::Outcome::Selected(cmd, _origin) => cmd,
                 }
             } else {
-                best.entry.cmd
+                template
             };
             (command, message, question)
         }

@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación); 5.1 adelantada. Pendientes de la fase 2: 2.7 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
+**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación) y 2.7 (alternativas sin instalar); 5.1 adelantada. Pendientes de la fase 2: 2.8 a 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -32,6 +32,7 @@ src/
   ask.rs           `pistasho ask`: palabras vacías, BM25 (`db::fts_search_words`), boost de mío / historial, dedupe por forma del comando
   system.rs        qué tiene la máquina: `which_in` (busca en PATH sin lanzar procesos), `binaries(cmd)` (los programas que ejecuta un comando: tokenizador con comillas, `$(...)`, tuberías, redirecciones, asignaciones, palabras clave y envoltorios `sudo`/`env`/`xargs`…), `missing_binaries`
   packages.rs      SO (`/etc/os-release`: `ID`, `ID_LIKE`) → gestor (apt, pacman, dnf, zypper); tabla curada `data/packages.toml` (comando → paquete por gestor, y programas que la distro instala con otro nombre); `exists` (pregunta al gestor); `adapt` (reescribe `fd` → `fdfind`); `plan_install` (el comando de instalación, sin ejecutarlo)
+  alternatives.rs  `[a]`: tabla curada `data/alternatives.toml` (programa que falta → comando hecho con herramientas base, p. ej. `tree` → `find {{dir}} -maxdepth 2 | sort`); solo para comandos que ejecutan ese único programa y si lo que ejecuta la alternativa está instalado
   prompt.rs        la línea de pregunta de `Ctrl-Space`: toma la línea del prompt en /dev/tty (sin pantalla alternativa), editor simple (solo al final), spinner `resolving…` si tarda > 150 ms
   index.rs         Entry/Source; tldr desde zip → db; cheats.toml e historial se resincronizan por huella (mtime + tamaño) al abrir
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
@@ -62,6 +63,7 @@ Detalles ya resueltos que conviene no romper:
 - Salidas de `ask --prompt --format zsh`: 0 = comando, 1 = sin coincidencia, 5 = la instalación falló (la salida es el mensaje), 130 = cancelado; el cuarto campo es `1` si algo escribió en la terminal (el gestor de paquetes).
 - zle tras una instalación: **no usar `zle -I`** (ni solo ni con `reset-prompt`): medido en tmux, el prompt se pierde o pisa la salida de `apt`. Lo que redibuja bien es `zle reset-prompt` a secas con el cursor en una línea en blanco; y como `reset-prompt` sube tantas líneas como tenga el prompt menos una, el widget (`_pistasho_room`) deja esas líneas en blanco antes (cuenta con `rows=("${(@f)${(%)PS1}}")`; `${#...}` de un escalar cuenta caracteres). Probado con prompts de 1, 2 y 3 líneas.
 - Cómo probar la instalación sin tocar la máquina: un `sudo` y un `apt` falsos en una carpeta al principio del `PATH` (el `apt` falso crea el binario) más `XDG_CONFIG_HOME` / `XDG_DATA_HOME` temporales con un atajo de prueba; y, para `apt` de verdad, `docker run -it ubuntu:24.04` con un `sudo` de relleno y la base copiada, manejado desde un panel de tmux.
+- Alternativas (`alternatives.rs`): reemplazan el comando entero (con sus propios `{{marcadores}}`, que se piden igual) y las opciones del original no se trasladan. Solo si el comando ejecuta **un único programa** y es el que falta (con una tubería no se sabría qué parte sustituir), y solo si todo lo que ejecuta la alternativa está instalado. La caja las muestra en una fila `Instead:`; si no hay paquete para instalar, la caja solo ofrece `[a]` y `y` no hace nada. Al elegirla el mensaje es `⚡ alternative · no install · N ms` (N = lo que tardó en resolver, no lo que tardó el usuario en pulsar) y en el popup se salta la lista. `ask --json` expone `alternative`.
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia
@@ -121,7 +123,7 @@ history_limit = 5000
 tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip"
 
 [install]
-offer = true                  # ofrecer instalar lo que falta; nunca instala sin preguntar
+offer = true                  # la caja de instalar / alternativa; false la apaga. Nunca instala sin preguntar
 
 [ui]
 height = "40%"                # alto del buscador en zsh: 40% | 15 | full

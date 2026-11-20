@@ -1,0 +1,88 @@
+# A program that is not installed → a command made only of tools every system has.
+#
+# [program]
+# command = "..."      # replaces the whole command, so it carries its own {{placeholders}}
+#
+# It is offered (`[a] alternative without installing`) only when the command runs that one
+# program and nothing else, and only if every program the alternative itself runs is installed.
+# Options of the original command are not carried over: the alternative is a plain stand-in.
+
+[tree]
+command = "find {{dir}} -maxdepth 2 | sort"
+
+[ncdu]
+command = "du -h -d1 {{dir}} | sort -h"
+
+[dust]
+command = "du -h -d1 {{dir}} | sort -h"
+
+[duf]
+command = "df -h"
+
+[htop]
+command = "top"
+
+[btop]
+command = "top"
+
+[procs]
+command = "ps aux"
+
+[rg]
+command = "grep -rn {{pattern}} {{dir}}"
+
+[ag]
+command = "grep -rn {{pattern}} {{dir}}"
+
+[ack]
+command = "grep -rn {{pattern}} {{dir}}"
+
+[fd]
+command = "find {{dir}} -name {{pattern}}"
+
+[bat]
+command = "cat {{file}}"
+
+[eza]
+command = "ls -la {{dir}}"
+
+[exa]
+command = "ls -la {{dir}}"
+
+[lsd]
+command = "ls -la {{dir}}"
+
+[jq]
+command = "python3 -m json.tool {{file}}"
+
+[sd]
+command = "sed -i 's/{{from}}/{{to}}/g' {{file}}"
+
+[unzip]
+command = "python3 -m zipfile -e {{file}} {{dir}}"
+
+[zip]
+command = "python3 -m zipfile -c {{archive}}.zip {{files}}"
+
+# `net-tools` is no longer installed by default on most distros
+[ifconfig]
+command = "ip addr"
+
+[netstat]
+command = "ss -tulpn"
+
+[nslookup]
+command = "getent hosts {{domain}}"
+
+[wget]
+command = "curl -O {{url}}"
+
+[http]
+command = "curl {{url}}"
+
+# tree-like browsers
+[broot]
+command = "find {{dir}} -maxdepth 2 | sort"
+
+[tre]
+command = "find {{dir}} -maxdepth 2 | sort"

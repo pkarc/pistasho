@@ -317,12 +317,13 @@ pub struct InstallBox {
     pub command: String,
     /// `Ubuntu 24.04.5 LTS · apt`
     pub system: String,
-    /// `sudo apt install -y tree`: exactly what will run if the user says yes.
-    pub install: String,
+    /// `sudo apt install -y tree`: exactly what will run if the user says yes. `None` when no
+    /// package provides the program, so there is nothing to install.
+    pub install: Option<String>,
     /// The programs that are not installed.
     pub missing: Vec<String>,
-    /// Whether `[a]`, an alternative that needs nothing new, is on offer.
-    pub alternative: bool,
+    /// `[a]`: a command made of tools that are already installed, and what it is.
+    pub alternative: Option<String>,
 }
 
 pub enum InstallChoice {
@@ -331,16 +332,21 @@ pub enum InstallChoice {
     Cancel,
 }
 
-/// Rows of the box: 2 borders, the warning, three fields, a blank line and the keys.
-const INSTALL_BOX_ROWS: u16 = 8;
+/// Rows of the box: 2 borders, the warning, the command and system, a blank line, the keys; plus
+/// a row for the install command and one for the alternative when there are such.
+fn install_box_rows(info: &InstallBox) -> u16 {
+    6 + 1 + u16::from(info.install.is_some()) + u16::from(info.alternative.is_some())
+}
 
 /// The key a user presses in the install box. `Enter` is deliberately not one of them: running
 /// a package manager needs an explicit `y` (or `s`, in Spanish), never a habit.
-fn install_key(key: KeyEvent, alternative: bool) -> Option<InstallChoice> {
+///
+/// `y` only counts when there is something to install, `a` only when there is an alternative.
+fn install_key(key: KeyEvent, can_install: bool, has_alternative: bool) -> Option<InstallChoice> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char('y' | 's') if !ctrl => Some(InstallChoice::Install),
-        KeyCode::Char('a') if !ctrl && alternative => Some(InstallChoice::Alternative),
+        KeyCode::Char('y' | 's') if !ctrl && can_install => Some(InstallChoice::Install),
+        KeyCode::Char('a') if !ctrl && has_alternative => Some(InstallChoice::Alternative),
         KeyCode::Esc | KeyCode::Char('n') if !ctrl => Some(InstallChoice::Cancel),
         KeyCode::Char('c' | 'g') if ctrl => Some(InstallChoice::Cancel),
         _ => None,
@@ -350,7 +356,7 @@ fn install_key(key: KeyEvent, alternative: bool) -> Option<InstallChoice> {
 /// Shows what the answer needs and what would be installed, and waits for the user's choice.
 /// Nothing is run here.
 pub fn confirm_install(info: &InstallBox) -> Result<InstallChoice> {
-    let rows = INSTALL_BOX_ROWS.min(terminal_rows().saturating_sub(1).max(1));
+    let rows = install_box_rows(info).min(terminal_rows().saturating_sub(1).max(1));
     let mut screen = Screen::open(Some(rows))?;
     let choice = loop {
         screen.terminal.draw(|f| draw_install(f, info))?;
@@ -358,7 +364,7 @@ pub fn confirm_install(info: &InstallBox) -> Result<InstallChoice> {
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        if let Some(choice) = install_key(key, info.alternative) {
+        if let Some(choice) = install_key(key, info.install.is_some(), info.alternative.is_some()) {
             break choice;
         }
     };
@@ -395,8 +401,10 @@ fn draw_install(f: &mut Frame, info: &InstallBox) {
         ]
     };
     let mut keys = vec![Span::raw(" ")];
-    keys.extend(key(tr("y", "s"), tr("install", "instalar"), GREEN));
-    if info.alternative {
+    if info.install.is_some() {
+        keys.extend(key(tr("y", "s"), tr("install", "instalar"), GREEN));
+    }
+    if info.alternative.is_some() {
         keys.extend(key(
             "a",
             tr("alternative without installing", "alternativa sin instalar"),
@@ -405,7 +413,7 @@ fn draw_install(f: &mut Frame, info: &InstallBox) {
     }
     keys.extend(key("esc", tr("cancel", "cancelar"), GRAY));
 
-    let lines = vec![
+    let mut lines = vec![
         Line::styled(
             format!(
                 " ⚠ {} {}",
@@ -416,10 +424,15 @@ fn draw_install(f: &mut Frame, info: &InstallBox) {
         ),
         field(tr("Command:", "Comando:"), &info.command, FG),
         field(tr("System:", "Sistema:"), &info.system, FG),
-        field(tr("Install:", "Instalar:"), &info.install, CYAN),
-        Line::raw(""),
-        Line::from(keys),
     ];
+    if let Some(install) = &info.install {
+        lines.push(field(tr("Install:", "Instalar:"), install, CYAN));
+    }
+    if let Some(alternative) = &info.alternative {
+        lines.push(field(tr("Instead:", "En su lugar:"), alternative, YEL));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(keys));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -971,8 +984,8 @@ mod tests {
         KeyEvent::new(code, mods)
     }
 
-    fn choice(key: KeyEvent, alternative: bool) -> &'static str {
-        match install_key(key, alternative) {
+    fn choice(key: KeyEvent, can_install: bool, has_alternative: bool) -> &'static str {
+        match install_key(key, can_install, has_alternative) {
             Some(InstallChoice::Install) => "install",
             Some(InstallChoice::Alternative) => "alternative",
             Some(InstallChoice::Cancel) => "cancel",
@@ -984,8 +997,8 @@ mod tests {
     #[test]
     fn only_an_explicit_key_installs() {
         let none = KeyModifiers::NONE;
-        assert_eq!(choice(press(KeyCode::Char('y'), none), false), "install");
-        assert_eq!(choice(press(KeyCode::Char('s'), none), false), "install");
+        assert_eq!(choice(press(KeyCode::Char('y'), none), true, false), "install");
+        assert_eq!(choice(press(KeyCode::Char('s'), none), true, false), "install");
         // Enter, Space, Tab and anything else do nothing: the box stays up
         for code in [
             KeyCode::Enter,
@@ -994,30 +1007,52 @@ mod tests {
             KeyCode::Char('x'),
             KeyCode::Down,
         ] {
-            assert_eq!(choice(press(code, none), true), "nothing", "{code:?}");
+            assert_eq!(choice(press(code, none), true, true), "nothing", "{code:?}");
         }
         // Ctrl-Y is not Y
         assert_eq!(
-            choice(press(KeyCode::Char('y'), KeyModifiers::CONTROL), false),
+            choice(press(KeyCode::Char('y'), KeyModifiers::CONTROL), true, false),
             "nothing"
         );
     }
 
     #[test]
-    fn the_box_can_be_cancelled_and_offers_the_alternative_only_when_there_is_one() {
+    fn the_box_can_be_cancelled_and_offers_only_what_exists() {
         let none = KeyModifiers::NONE;
-        assert_eq!(choice(press(KeyCode::Esc, none), false), "cancel");
-        assert_eq!(choice(press(KeyCode::Char('n'), none), false), "cancel");
+        assert_eq!(choice(press(KeyCode::Esc, none), true, false), "cancel");
+        assert_eq!(choice(press(KeyCode::Char('n'), none), false, false), "cancel");
         assert_eq!(
-            choice(press(KeyCode::Char('c'), KeyModifiers::CONTROL), false),
+            choice(press(KeyCode::Char('c'), KeyModifiers::CONTROL), true, true),
             "cancel"
         );
-        assert_eq!(choice(press(KeyCode::Char('a'), none), true), "alternative");
+        assert_eq!(choice(press(KeyCode::Char('a'), none), true, true), "alternative");
         assert_eq!(
-            choice(press(KeyCode::Char('a'), none), false),
+            choice(press(KeyCode::Char('a'), none), true, false),
             "nothing",
             "no alternative to pick"
         );
+        // no package for it: `y` must not start an install there is no plan for
+        assert_eq!(choice(press(KeyCode::Char('y'), none), false, true), "nothing");
+        assert_eq!(
+            choice(press(KeyCode::Char('a'), none), false, true),
+            "alternative"
+        );
+    }
+
+    #[test]
+    fn the_box_grows_with_what_it_offers() {
+        let mut info = InstallBox {
+            command: "tree".into(),
+            system: "Ubuntu".into(),
+            install: None,
+            missing: vec!["tree".into()],
+            alternative: None,
+        };
+        let bare = install_box_rows(&info);
+        info.install = Some("sudo apt install -y tree".into());
+        assert_eq!(install_box_rows(&info), bare + 1);
+        info.alternative = Some("find . | sort".into());
+        assert_eq!(install_box_rows(&info), bare + 2);
     }
 
     #[test]
