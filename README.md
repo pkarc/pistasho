@@ -36,7 +36,7 @@ pistasho init tmux >> ~/.tmux.conf
 | question | `Enter` | Resolve; if the command has placeholders, asks for their values |
 | question | `Tab` (empty line) | Explore everything: your cheats, history and tldr |
 | question | `Esc` / `Ctrl-C` | Cancel, the prompt stays as it was |
-| tmux | `prefix + g` | Opens the searcher in a popup and sends the command to the pane |
+| tmux | `prefix + g` | Opens the same question line in a popup. The answer is shown with the other candidates (`↑↓` see more, `Enter` sends, `Tab` on an empty line explores) and the command is typed into the pane without Enter, also over ssh |
 | list | `↑ ↓` / `Ctrl-P Ctrl-N` | Move |
 | list | `Enter` | Pick; if it has placeholders, asks for their values |
 | list | `Tab` | Insert the template as is, without filling |

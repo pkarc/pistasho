@@ -77,7 +77,7 @@ pub fn tmux(cfg: &Config) -> String {
 fn tmux_binding(key: &str, exe: &str) -> String {
     format!(
         "# pistasho · tmux popup (add it to ~/.tmux.conf)\n\
-         bind-key {key} run-shell -b \"tmux display-popup -c #{{client_name}} -t #{{pane_id}} -E -w 80% -h 60% \\\"{exe} search --send-to #{{pane_id}}\\\"\"\n"
+         bind-key {key} run-shell -b \"tmux display-popup -c #{{client_name}} -t #{{pane_id}} -E -w 80% -h 60% \\\"{exe} ask --prompt --send-to #{{pane_id}}\\\"\"\n"
     )
 }
 
@@ -98,7 +98,7 @@ mod tests {
             .to_string();
         assert_eq!(
             line,
-            "bind-key g run-shell -b \"tmux display-popup -c #{client_name} -t #{pane_id} -E -w 80% -h 60% \\\"'/home/u/.cargo/bin/pistasho' search --send-to #{pane_id}\\\"\""
+            "bind-key g run-shell -b \"tmux display-popup -c #{client_name} -t #{pane_id} -E -w 80% -h 60% \\\"'/home/u/.cargo/bin/pistasho' ask --prompt --send-to #{pane_id}\\\"\""
         );
         assert!(
             !line.contains("'#{pane_id}'"),

@@ -36,7 +36,7 @@ pistasho init tmux >> ~/.tmux.conf
 | pregunta | `Enter` | Resolver; si el comando tiene marcadores, pide sus valores |
 | pregunta | `Tab` (línea vacía) | Explorar todo: tus atajos, historial y tldr |
 | pregunta | `Esc` / `Ctrl-C` | Cancelar, el prompt queda como estaba |
-| tmux | `prefix + g` | Abre el buscador en un popup y envía el comando al panel |
+| tmux | `prefix + g` | Abre la misma línea de pregunta en un popup. La respuesta se muestra con las demás candidatas (`↑↓` ver más, `Enter` envía, `Tab` en una línea vacía explora) y el comando se escribe en el panel sin Enter, también por ssh |
 | lista | `↑ ↓` / `Ctrl-P Ctrl-N` | Mover |
 | lista | `Enter` | Elegir; si tiene marcadores, pide sus valores |
 | lista | `Tab` | Insertar la plantilla tal cual, sin rellenar |

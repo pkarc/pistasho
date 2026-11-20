@@ -55,10 +55,13 @@ pub enum ListMode {
     /// The second `Ctrl-Space`: the candidates for `question`, which stay on screen while the
     /// filter is empty; typing searches everything. `candidates` and `current` are indices into
     /// the entries given to [`run`]; `current` is the command on the prompt, selected at first.
+    /// With `send` the hint says the pick is sent to a tmux pane rather than replacing a command
+    /// (the popup has no prompt to replace: this list is where its answer is shown).
     Alternatives {
         question: String,
         candidates: Vec<usize>,
         current: Option<usize>,
+        send: bool,
     },
 }
 
@@ -600,16 +603,23 @@ fn list_lines(app: &mut App, h: usize) -> Vec<Line<'static>> {
 /// hints on the bottom border (ADR 0001).
 fn draw_compact(f: &mut Frame, app: &mut App, area: Rect) {
     let (title, hint) = match &app.mode {
-        ListMode::Alternatives { question, .. } => (
+        ListMode::Alternatives { question, send, .. } => (
             format!(
                 "{} · «{}»",
                 tr("other options", "otras opciones"),
                 clip(question, (area.width as usize).saturating_sub(24))
             ),
-            tr(
-                " ↑↓ move · ⏎ replace · esc keep current ",
-                " ↑↓ mover · ⏎ reemplazar · esc dejar el actual ",
-            ),
+            if *send {
+                tr(
+                    " ↑↓ see more · ⏎ send · esc cancel ",
+                    " ↑↓ ver más · ⏎ enviar · esc cancelar ",
+                )
+            } else {
+                tr(
+                    " ↑↓ move · ⏎ replace · esc keep current ",
+                    " ↑↓ mover · ⏎ reemplazar · esc dejar el actual ",
+                )
+            },
         ),
         _ => (
             tr(
@@ -715,6 +725,7 @@ mod tests {
             question: "how long has it been up".into(),
             candidates,
             current,
+            send: false,
         }
     }
 

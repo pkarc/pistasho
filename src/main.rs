@@ -102,6 +102,9 @@ enum Command {
         /// Text to pre-fill the question with (with --prompt)
         #[arg(long, default_value = "")]
         initial: String,
+        /// With --prompt: send the result to this tmux pane instead of printing it (the popup)
+        #[arg(long, value_name = "PANE")]
+        send_to: Option<String>,
         /// Open the list of alternatives for the question (what a second `Ctrl-Space` runs)
         #[arg(long)]
         alternatives: bool,
@@ -270,6 +273,7 @@ fn run() -> Result<ExitCode> {
             limit,
             prompt,
             initial,
+            send_to,
             alternatives,
             explore,
             current,
@@ -289,7 +293,7 @@ fn run() -> Result<ExitCode> {
                 return ask_alternatives(&cfg, &question.join(" "), &current, format);
             }
             if prompt {
-                return ask_on_prompt(&cfg, &initial, format);
+                return ask_on_prompt(&cfg, &initial, format, send_to.as_deref());
             }
             let db = index::open_synced(&cfg)?;
             let question = question.join(" ");
@@ -387,6 +391,81 @@ fn no_match(format: OutputFormat) -> ExitCode {
     ExitCode::from(1)
 }
 
+/// What `Ctrl-Space` runs: read the question on the prompt line, resolve it, ask for the
+/// placeholders if the command has any, and hand the result to the widget.
+///
+/// With `send_to` (the tmux popup) there is no prompt to put the answer on: the answer is shown
+/// as the candidate list, best one selected (`⏎ send · ↑↓ see more`), and the pick is typed into
+/// that pane without Enter.
+///
+/// Exit codes: 0 = a command is in the output (or was sent), 1 = nothing matched (the output is
+/// the message), 130 = cancelled.
+fn ask_on_prompt(
+    cfg: &Config,
+    initial: &str,
+    format: OutputFormat,
+    send_to: Option<&str>,
+) -> Result<ExitCode> {
+    let height = search_height(cfg, None, false);
+    let (command, message, question) = match prompt::read_question(initial)? {
+        prompt::Answer::Cancelled => return Ok(ExitCode::from(130)),
+        prompt::Answer::Explore => match explore_list(cfg)? {
+            None => return Ok(ExitCode::from(130)),
+            Some(cmd) => (cmd, String::new(), String::new()),
+        },
+        prompt::Answer::Question(question) => {
+            let started = std::time::Instant::now();
+            let db = index::open_synced(cfg)?;
+            let found = prompt::with_spinner(|| ask::ask(&db, &question, ALTERNATIVES))??;
+            let more = found.len().saturating_sub(1);
+            let Some(best) = found.into_iter().next() else {
+                if send_to.is_some() {
+                    // the popup closes with the process: keep the message on screen until a key
+                    prompt::notice(tr(
+                        "✗ no match for that question",
+                        "✗ ninguna coincidencia para esa pregunta",
+                    ))?;
+                    return Ok(ExitCode::from(1));
+                }
+                return Ok(no_match(format));
+            };
+            let message = found_message(
+                best.entry.source.tag(),
+                &best.entry.tool,
+                started.elapsed().as_millis(),
+                more,
+            );
+            let command = if send_to.is_some() {
+                match pick_alternative(cfg, &question, &best.entry.cmd, true)? {
+                    None => return Ok(ExitCode::from(130)),
+                    Some((cmd, _origin)) => cmd,
+                }
+            } else if placeholders::has_placeholders(&best.entry.cmd) {
+                let options = tui::Options {
+                    initial_query: String::new(),
+                    fill: true,
+                    height,
+                    start_fill: Some(best.entry.cmd.clone()),
+                    mode: tui::ListMode::Explore,
+                };
+                match tui::run(&[], options)? {
+                    tui::Outcome::Cancelled => return Ok(ExitCode::from(130)),
+                    tui::Outcome::Selected(cmd, _origin) => cmd,
+                }
+            } else {
+                best.entry.cmd
+            };
+            (command, message, question)
+        }
+    };
+    if let Some(pane) = send_to {
+        send_to_tmux(pane, &command)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    emit(format, &command, &message, &question);
+    Ok(ExitCode::SUCCESS)
+}
+
 /// The list of everything (cheats, then history, then tldr) with a filter. `None` if cancelled.
 fn explore_list(cfg: &Config) -> Result<Option<String>> {
     let idx = Index::load(cfg)?;
@@ -421,58 +500,28 @@ fn found_message(source: &str, tool: &str, ms: u128, more: usize) -> String {
 /// How many BM25 candidates the alternatives list starts with.
 const ALTERNATIVES: usize = 20;
 
-/// What `Ctrl-Space` runs: read the question on the prompt line, resolve it, ask for the
-/// placeholders if the command has any, and hand the result to the widget.
-///
-/// Exit codes: 0 = a command is in the output, 1 = nothing matched (the output is the message),
-/// 130 = cancelled.
-fn ask_on_prompt(cfg: &Config, initial: &str, format: OutputFormat) -> Result<ExitCode> {
-    let height = search_height(cfg, None, false);
-    let (command, message, question) = match prompt::read_question(initial)? {
-        prompt::Answer::Cancelled => return Ok(ExitCode::from(130)),
-        prompt::Answer::Explore => match explore_list(cfg)? {
-            None => return Ok(ExitCode::from(130)),
-            Some(cmd) => (cmd, String::new(), String::new()),
-        },
-        prompt::Answer::Question(question) => {
-            let started = std::time::Instant::now();
-            let db = index::open_synced(cfg)?;
-            let found = prompt::with_spinner(|| ask::ask(&db, &question, ALTERNATIVES))??;
-            let more = found.len().saturating_sub(1);
-            let Some(best) = found.into_iter().next() else {
-                return Ok(no_match(format));
-            };
-            let message = found_message(
-                best.entry.source.tag(),
-                &best.entry.tool,
-                started.elapsed().as_millis(),
-                more,
-            );
-            let command = if placeholders::has_placeholders(&best.entry.cmd) {
-                let options = tui::Options {
-                    initial_query: String::new(),
-                    fill: true,
-                    height,
-                    start_fill: Some(best.entry.cmd.clone()),
-                    mode: tui::ListMode::Explore,
-                };
-                match tui::run(&[], options)? {
-                    tui::Outcome::Cancelled => return Ok(ExitCode::from(130)),
-                    tui::Outcome::Selected(cmd, _origin) => cmd,
-                }
-            } else {
-                best.entry.cmd
-            };
-            (command, message, question)
-        }
-    };
-    emit(format, &command, &message, &question);
-    Ok(ExitCode::SUCCESS)
-}
-
 /// What a second `Ctrl-Space` runs: the candidates for the same question, with the command that
 /// is on the prompt selected. Exit codes: 0 = replaced, 130 = kept the current one.
 fn ask_alternatives(cfg: &Config, question: &str, current: &str, format: OutputFormat) -> Result<ExitCode> {
+    match pick_alternative(cfg, question, current, false)? {
+        None => Ok(ExitCode::from(130)),
+        Some((cmd, origin)) => {
+            let message = format!("✓ {} · {origin}", tr("replaced", "reemplazado"));
+            emit(format, &cmd, &message, question);
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+/// Shows the candidates for `question` with `current` selected, lets the user pick (filling in
+/// placeholders if needed) and returns `(command, origin)`, or `None` if cancelled. With `send`
+/// the hints say the pick is sent to a tmux pane rather than replacing the prompt.
+fn pick_alternative(
+    cfg: &Config,
+    question: &str,
+    current: &str,
+    send: bool,
+) -> Result<Option<(String, String)>> {
     let idx = Index::load(cfg)?;
     let db = index::open_synced(cfg)?;
     let found = ask::ask(&db, question, ALTERNATIVES)?;
@@ -501,16 +550,13 @@ fn ask_alternatives(cfg: &Config, question: &str, current: &str, format: OutputF
             question: question.to_string(),
             candidates,
             current: current_idx,
+            send,
         },
     };
-    match tui::run(&idx.entries, options)? {
-        tui::Outcome::Cancelled => Ok(ExitCode::from(130)),
-        tui::Outcome::Selected(cmd, origin) => {
-            let message = format!("✓ {} · {origin}", tr("replaced", "reemplazado"));
-            emit(format, &cmd, &message, question);
-            Ok(ExitCode::SUCCESS)
-        }
-    }
+    Ok(match tui::run(&idx.entries, options)? {
+        tui::Outcome::Cancelled => None,
+        tui::Outcome::Selected(cmd, origin) => Some((cmd, origin)),
+    })
 }
 
 /// The popup already bounds the searcher, so inside tmux it always uses its full area.

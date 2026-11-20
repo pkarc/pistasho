@@ -160,6 +160,32 @@ pub fn read_question(initial: &str) -> Result<Answer> {
     Ok(answer)
 }
 
+/// Shows a one-line message on the current line and waits for a key. For the tmux popup, which
+/// closes when the process ends and would otherwise swallow the message.
+pub fn notice(message: &str) -> Result<()> {
+    let mut out = tty()?;
+    enable_raw_mode()?;
+    let _raw = RawMode;
+    queue!(
+        out,
+        MoveToColumn(0),
+        Clear(ClearType::CurrentLine),
+        Print(message),
+        SetForegroundColor(GRAY),
+        Print(format!("  {}", tr("(press any key)", "(pulsa una tecla)"))),
+        ResetColor
+    )?;
+    out.flush()?;
+    loop {
+        if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Press {
+                break;
+            }
+        }
+    }
+    clear_line(&mut out)
+}
+
 /// Runs `work` and, if it takes longer than `SPINNER_DELAY`, shows `resolving…` with a spinner
 /// on the prompt line meanwhile. The line is left empty afterwards.
 pub fn with_spinner<T>(work: impl FnOnce() -> T) -> Result<T> {
