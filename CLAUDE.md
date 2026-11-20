@@ -30,13 +30,14 @@ src/
   config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
   db.rs            SQLite (`~/.local/share/pistasho/pistasho.db`): `entries`, `entries_fts` (FTS5, BM25, `remove_diacritics 2`), `meta`; `fts_query` con stemming ligero
   ask.rs           `pistasho ask`: palabras vacías, BM25 (`db::fts_search_words`), boost de mío / historial, dedupe por forma del comando
+  prompt.rs        la línea de pregunta de `Ctrl-Space`: toma la línea del prompt en /dev/tty (sin pantalla alternativa), editor simple (solo al final), spinner `resolving…` si tarda > 150 ms
   index.rs         Entry/Source; tldr desde zip → db; cheats.toml e historial se resincronizan por huella (mtime + tamaño) al abrir
   tldr.rs          parser del markdown de tldr-pages + rutas pages[.lang]/plataforma/x.md   (sin deps)
   placeholders.rs  {{marcadores}}: parse, fill, normalize_tldr ({{[-o|--opt]}} → --opt)     (sin deps)
   history.rs       ~/.zsh_history: unmetafy (0x83), formato extendido, multilínea, agregado (sin deps)
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40); busca por prefijos (solo reevalúa lo que ya coincidía), en hilos, y solo en los primeros 150 caracteres de `alt`
-  tui.rs           ratatui en /dev/tty: lista de candidatos (modos alternativas / explorar) + relleno de marcadores, en línea debajo del prompt. Hoy sigue siendo el buscador de `Ctrl-G`; refactor en la tarea 2.3b
-  shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Hoy aún genera el widget de `Ctrl-G`; se reemplaza en la tarea 2.3a
+  tui.rs           ratatui en /dev/tty: lista de candidatos (hoy: el buscador, al que se llega con `Tab` en la pregunta; la tarea 2.3b la reescribe como alternativas / explorar) + relleno de marcadores (con `start_fill`, un viewport corto de 7 filas), en línea debajo del prompt
+  shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Genera solo el widget de `Ctrl-Space` (`_pistasho_ask`); el de `Ctrl-G` ya no existe
   eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml; `--mode fuzzy|bm25`, `--weights`
 eval/questions.toml   101 preguntas en español con sus herramientas correctas (40 originales + 61 genéricas); claves `question` / `tools`
 examples/cheats.toml
@@ -50,6 +51,7 @@ Detalles ya resueltos que conviene no romper:
 - La base es derivada: `update` rehace las filas de tldr; un `SCHEMA_VERSION` distinto la reinicia. Las columnas SQL son `description` y `uses` (no `desc` / `count`, palabras reservadas).
 - Historial de zsh: `HISTFILE` es una variable de zsh que casi nunca está exportada, así que el widget la pasa (`HISTFILE="$HISTFILE" command pistasho …`) y `Config::history_path` prueba `~/.zsh_history`, `~/.histfile`… si no hay variable.
 - Popup de tmux: `display-popup` NO expande formatos (`#{pane_id}`) dentro de su comando; el proceso recibe el texto literal. Por eso `init tmux` genera un `run-shell -b` (que sí expande `#{pane_id}` y `#{client_name}`) que lanza `tmux display-popup` con valores ya resueltos. El `TMUX_PANE` del popup es el del propio popup, no el panel de destino. Probar siempre con un cliente tmux real (pty), no solo con `send-keys`.
+- Widget de `Ctrl-Space`: `pistasho ask --prompt --format zsh --initial "$BUFFER"` imprime `comando NUL mensaje` (zsh conserva los NUL en `$(...)`); código 0 = hay comando, 1 = sin coincidencia (la salida es el mensaje), 130 = cancelado. El widget llama a `zle reset-prompt` y luego a `zle -M` (al revés se borra el mensaje). Todo se dibuja en /dev/tty; stdout solo lleva el resultado. `"^ "` y `"^@"` son la misma tecla en zsh. `keys.search` ya no existe (los config viejos con esa clave la ignoran).
 - Códigos de salida de `search`: 0 = elegido, 130 = cancelado, 2 = error.
 
 ## Diseño de la experiencia
@@ -112,7 +114,6 @@ tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip
 height = "40%"                # alto del buscador en zsh: 40% | 15 | full
 
 [keys]
-search = "^G"   # obsoleto (ADR 0001): solo se enlaza hasta que la tarea 2.3a quite el widget de Ctrl-G; luego se ignora
 ask = "^ "      # Ctrl-Space: la única entrada (fase 2)
 tmux = "g"      # prefix + g
 

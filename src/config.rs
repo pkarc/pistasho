@@ -34,9 +34,8 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Keys {
-    /// Searcher (zsh, bindkey notation).
-    pub search: String,
-    /// Question mode (phase 2).
+    /// The one zsh shortcut (bindkey notation; `^ ` is Ctrl-Space). Config files from before
+    /// ADR 0001 may still have a `search` key; it is ignored.
     pub ask: String,
     /// Key after the tmux prefix for the popup.
     pub tmux: String,
@@ -140,7 +139,6 @@ impl Default for Config {
 impl Default for Keys {
     fn default() -> Self {
         Self {
-            search: "^G".into(),
             ask: "^ ".into(),
             tmux: "g".into(),
         }
@@ -356,13 +354,13 @@ pub fn wizard() -> Result<(Config, bool)> {
     )?;
     cfg.history = !hist.to_lowercase().starts_with('n');
 
-    cfg.keys.search = ask(
+    cfg.keys.ask = ask(
         &mut stdin,
         tr(
-            "Searcher shortcut in zsh (bindkey notation)",
-            "Atajo del buscador en zsh (notación bindkey)",
+            "Shortcut in zsh (bindkey notation; \"^ \" is Ctrl-Space)",
+            "Atajo en zsh (notación bindkey; \"^ \" es Ctrl-Space)",
         ),
-        &cfg.keys.search,
+        &cfg.keys.ask,
     )?;
     cfg.keys.tmux = ask(
         &mut stdin,

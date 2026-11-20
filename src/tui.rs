@@ -24,6 +24,8 @@ use std::io::Write;
 use std::os::fd::AsRawFd;
 
 const MAX_RESULTS: usize = 300;
+/// Rows of the fill-only viewport: input box (3) + command preview (3) + hint (1).
+const FILL_ONLY_ROWS: u16 = 7;
 
 // Palette (Tokyo Night)
 const FG: Color = Color::Rgb(0xc0, 0xca, 0xf5);
@@ -45,6 +47,8 @@ pub struct Options {
     pub fill: bool,
     /// Full screen (alternate screen) or compact below the prompt.
     pub height: Height,
+    /// Skip the search and go straight to filling the placeholders of this command.
+    pub start_fill: Option<String>,
 }
 
 struct Fill {
@@ -53,6 +57,19 @@ struct Fill {
     values: Vec<Option<String>>,
     cur: usize,
     input: String,
+}
+
+impl Fill {
+    fn new(template: &str) -> Self {
+        let names = placeholders::names(template);
+        Self {
+            template: template.to_string(),
+            values: vec![None; names.len()],
+            names,
+            cur: 0,
+            input: String::new(),
+        }
+    }
 }
 
 struct App<'a> {
@@ -64,6 +81,8 @@ struct App<'a> {
     offset: usize,
     fill: Option<Fill>,
     fill_enabled: bool,
+    /// Only the placeholder fill-in, no search: a short viewport without list or details.
+    fill_only: bool,
 }
 
 impl<'a> App<'a> {
@@ -129,7 +148,17 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
         .context(tr("could not open /dev/tty", "no pude abrir /dev/tty"))?;
     let mut tty_w = tty.try_clone()?;
     enable_raw_mode()?;
-    let inline_rows = opts.height.rows(size().map(|(_, rows)| rows).unwrap_or(24));
+    let fill_only = opts
+        .start_fill
+        .as_deref()
+        .is_some_and(placeholders::has_placeholders);
+    let term_rows = size().map(|(_, rows)| rows).unwrap_or(24);
+    let inline_rows = if fill_only {
+        // input box + command preview + hint line, whatever `ui.height` says
+        Some(FILL_ONLY_ROWS.min(term_rows.saturating_sub(1).max(1)))
+    } else {
+        opts.height.rows(term_rows)
+    };
     let _guard = Guard {
         alternate_screen: inline_rows.is_none(),
         saved_stdout: if inline_rows.is_some() {
@@ -166,8 +195,13 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
         results: Vec::new(),
         sel: 0,
         offset: 0,
-        fill: None,
+        fill: opts
+            .start_fill
+            .as_deref()
+            .filter(|t| placeholders::has_placeholders(t))
+            .map(Fill::new),
         fill_enabled: opts.fill,
+        fill_only,
     };
     app.refresh();
 
@@ -230,14 +264,7 @@ fn on_search_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
         KeyCode::Enter => {
             let entry = app.selected()?;
             if app.fill_enabled && placeholders::has_placeholders(&entry.cmd) {
-                let names = placeholders::names(&entry.cmd);
-                app.fill = Some(Fill {
-                    template: entry.cmd.clone(),
-                    values: vec![None; names.len()],
-                    names,
-                    cur: 0,
-                    input: String::new(),
-                });
+                app.fill = Some(Fill::new(&entry.cmd));
                 None
             } else {
                 Some(Outcome::Selected(entry.cmd.clone()))
@@ -332,6 +359,21 @@ fn cmd_spans(cmd: &str, bg: Option<Color>) -> Vec<Span<'static>> {
 
 fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    if app.fill_only {
+        let [top, preview, footer] = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .areas(area);
+        draw_fill(f, app, top);
+        draw_list(f, app, preview);
+        f.render_widget(
+            Paragraph::new(Line::styled(footer_hint(true), Style::default().fg(GRAY))),
+            footer,
+        );
+        return;
+    }
     let [top, list, detail, footer] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(3),
@@ -348,7 +390,18 @@ fn draw(f: &mut Frame, app: &mut App) {
     draw_list(f, app, list);
     draw_detail(f, app, detail);
 
-    let hint = if app.fill.is_some() {
+    f.render_widget(
+        Paragraph::new(Line::styled(
+            footer_hint(app.fill.is_some()),
+            Style::default().fg(GRAY),
+        )),
+        footer,
+    );
+}
+
+/// Key hints for the last line, for the placeholder fill-in or for the list.
+fn footer_hint(filling: bool) -> &'static str {
+    if filling {
         tr(
             " ⏎ next · tab skip · shift-tab back · esc insert as is · ctrl-c cancel",
             " ⏎ siguiente · tab saltar · shift-tab volver · esc insertar así · ctrl-c cancelar",
@@ -358,11 +411,7 @@ fn draw(f: &mut Frame, app: &mut App) {
             " ↑↓ move · ⏎ insert · tab without filling · ctrl-u clear · esc quit",
             " ↑↓ mover · ⏎ insertar · tab sin rellenar · ctrl-u borrar · esc salir",
         )
-    };
-    f.render_widget(
-        Paragraph::new(Line::styled(hint, Style::default().fg(GRAY))),
-        footer,
-    );
+    }
 }
 
 fn block(title: &str) -> Block<'static> {

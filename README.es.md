@@ -4,9 +4,9 @@
 
 > *pista* + *sh*: la pista del comando que necesitas, sin salir de la terminal.
 
-Presionas `Ctrl-G` en zsh, buscas entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, eliges, rellenas los `{{marcadores}}` y el comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo.
+Presionas `Ctrl-Space` en zsh, escribes lo que quieres con tus palabras (en español o en inglés) y el mejor comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo. Busca entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, y todo se queda en tu máquina.
 
-Estado: **fase 1** (buscador). El modo pregunta en lenguaje natural, Laya y el LLM de respaldo vienen después; ver [Hoja de ruta](#hoja-de-ruta).
+Estado: **fase 2 en curso**. Las preguntas se responden en local con BM25 sobre un índice de texto completo. Después vienen las alternativas cuando la respuesta no es la correcta, los embeddings, instalar una herramienta que falta y los avisos de riesgo; Laya y el LLM de respaldo vienen más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
 
 ## Instalación
 
@@ -31,14 +31,19 @@ pistasho init tmux >> ~/.tmux.conf
 
 | Dónde | Tecla | Qué hace |
 |---|---|---|
-| zsh | `Ctrl-G` | Abre el buscador con lo que ya escribiste como búsqueda inicial |
+| zsh | `Ctrl-Space` | Toma la línea del prompt (` ✦ pregunta `): escribes una pregunta, `Enter` deja el mejor comando en el prompt. El texto que ya había en el prompt pasa a ser la pregunta |
+| pregunta | `Enter` | Resolver; si el comando tiene marcadores, pide sus valores |
+| pregunta | `Tab` (línea vacía) | Explorar todo: tus atajos, historial y tldr |
+| pregunta | `Esc` / `Ctrl-C` | Cancelar, el prompt queda como estaba |
 | tmux | `prefix + g` | Abre el buscador en un popup y envía el comando al panel |
-| buscador | `↑ ↓` / `Ctrl-P Ctrl-N` | Mover |
-| buscador | `Enter` | Elegir; si tiene marcadores, pide sus valores |
-| buscador | `Tab` | Insertar la plantilla tal cual, sin rellenar |
-| buscador | `Esc` | Cancelar |
+| lista | `↑ ↓` / `Ctrl-P Ctrl-N` | Mover |
+| lista | `Enter` | Elegir; si tiene marcadores, pide sus valores |
+| lista | `Tab` | Insertar la plantilla tal cual, sin rellenar |
+| lista | `Esc` | Cancelar |
 | relleno | `Enter` / `Tab` / `Shift-Tab` | Siguiente / saltar / volver |
 | relleno | `Esc` | Insertar con los marcadores que falten |
+
+`Ctrl-Space` es `keys.ask` en `config.toml` (notación `bindkey` de zsh, `"^ "`). Algunos escritorios usan `Ctrl-Space` para cambiar el método de entrada; cambia la tecla si te estorba.
 
 Etiquetas de origen: `tldr` (páginas de tldr), `mío` (tu cheatsheet), `hist` (tu historial de zsh).
 
@@ -57,7 +62,7 @@ pistasho eval eval/questions.toml [--mode fuzzy|bm25]       # mide la precisión
 
 ### Alto del buscador
 
-En zsh el buscador abre compacto debajo del prompt (40% de la pantalla por defecto). Cámbialo con `[ui] height` en `config.toml` (`40%`, un número de líneas o `full`) o con `pistasho search --height`. El popup de tmux siempre usa su área completa.
+En zsh las listas y el relleno de marcadores abren compactos debajo del prompt (40% de la pantalla por defecto). Cámbialo con `[ui] height` en `config.toml` (`40%`, un número de líneas o `full`) o con `pistasho search --height`. El relleno tras una pregunta siempre usa una altura corta fija. El popup de tmux siempre usa su área completa.
 
 ## Idioma
 

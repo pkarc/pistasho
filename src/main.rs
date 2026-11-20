@@ -6,6 +6,7 @@ mod history;
 mod i18n;
 mod index;
 mod placeholders;
+mod prompt;
 mod search;
 mod shell;
 mod tldr;
@@ -94,7 +95,23 @@ enum Command {
         /// How many candidates to include with --json
         #[arg(short = 'n', long, default_value_t = 10)]
         limit: usize,
+        /// Read the question on the prompt line (what the `Ctrl-Space` widget runs)
+        #[arg(long)]
+        prompt: bool,
+        /// Text to pre-fill the question with (with --prompt)
+        #[arg(long, default_value = "")]
+        initial: String,
+        /// How the result is written (with --prompt): `plain` is just the command; `zsh` is the
+        /// command, a NUL byte and a one-line message for the widget
+        #[arg(long, value_enum, default_value_t = OutputFormat::Plain)]
+        format: OutputFormat,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Plain,
+    Zsh,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -142,6 +159,7 @@ fn run() -> Result<ExitCode> {
                     initial_query: query,
                     fill: !no_fill,
                     height: search_height(&cfg, height.as_deref(), send_to.is_some()),
+                    start_fill: None,
                 },
             )?;
             match outcome {
@@ -239,8 +257,14 @@ fn run() -> Result<ExitCode> {
             question,
             json,
             limit,
+            prompt,
+            initial,
+            format,
         } => {
             let cfg = Config::load()?;
+            if prompt {
+                return ask_on_prompt(&cfg, &initial, format);
+            }
             let db = index::open_synced(&cfg)?;
             let question = question.join(" ");
             let candidates = ask::ask(&db, &question, if json { limit } else { 1 })?;
@@ -313,6 +337,73 @@ fn report_timing(
         let list: Vec<String> = per_key.iter().map(|d| format!("{:.0}", ms(*d))).collect();
         eprintln!("keystroke ms:   {}", list.join(" "));
     }
+}
+
+/// What `Ctrl-Space` runs: read the question on the prompt line, resolve it, ask for the
+/// placeholders if the command has any, and hand the result to the widget.
+///
+/// Exit codes: 0 = a command is in the output, 1 = nothing matched (the output is the message),
+/// 130 = cancelled.
+fn ask_on_prompt(cfg: &Config, initial: &str, format: OutputFormat) -> Result<ExitCode> {
+    let height = search_height(cfg, None, false);
+    let (command, message) = match prompt::read_question(initial)? {
+        prompt::Answer::Cancelled => return Ok(ExitCode::from(130)),
+        prompt::Answer::Explore => {
+            let idx = Index::load(cfg)?;
+            let options = tui::Options {
+                initial_query: String::new(),
+                fill: true,
+                height,
+                start_fill: None,
+            };
+            match tui::run(&idx.entries, options)? {
+                tui::Outcome::Cancelled => return Ok(ExitCode::from(130)),
+                tui::Outcome::Selected(cmd) => (cmd, String::new()),
+            }
+        }
+        prompt::Answer::Question(question) => {
+            let started = std::time::Instant::now();
+            let db = index::open_synced(cfg)?;
+            let found = prompt::with_spinner(|| ask::ask(&db, &question, 1))??;
+            let Some(best) = found.into_iter().next() else {
+                let message = tr(
+                    "✗ no match for that question",
+                    "✗ ninguna coincidencia para esa pregunta",
+                );
+                match format {
+                    OutputFormat::Zsh => print!("{message}"),
+                    OutputFormat::Plain => eprintln!("pistasho: {message}"),
+                }
+                return Ok(ExitCode::from(1));
+            };
+            let message = format!(
+                "⚡ local · {}/{} · {} ms",
+                best.entry.source.tag(),
+                best.entry.tool,
+                started.elapsed().as_millis()
+            );
+            let command = if placeholders::has_placeholders(&best.entry.cmd) {
+                let options = tui::Options {
+                    initial_query: String::new(),
+                    fill: true,
+                    height,
+                    start_fill: Some(best.entry.cmd.clone()),
+                };
+                match tui::run(&[], options)? {
+                    tui::Outcome::Cancelled => return Ok(ExitCode::from(130)),
+                    tui::Outcome::Selected(cmd) => cmd,
+                }
+            } else {
+                best.entry.cmd
+            };
+            (command, message)
+        }
+    };
+    match format {
+        OutputFormat::Zsh => print!("{command}\0{message}"),
+        OutputFormat::Plain => println!("{command}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The popup already bounds the searcher, so inside tmux it always uses its full area.

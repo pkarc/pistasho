@@ -2,26 +2,36 @@
 
 use crate::config::Config;
 
+/// The zsh widget behind `Ctrl-Space`: a question on the prompt line, the best command left in
+/// `BUFFER`. Never runs it. `pistasho ask --prompt --format zsh` prints `command NUL message`
+/// (zsh keeps NUL bytes in `$(...)`, which is what lets a multiline command travel safely).
 pub fn zsh(cfg: &Config) -> String {
-    let key = cfg.keys.search.replace('\'', "");
+    let key = cfg.keys.ask.replace('\'', "");
     format!(
         r#"# pistasho · zsh integration
 # In ~/.zshrc:  eval "$(pistasho init zsh)"
 
-_pistasho_search() {{
-  local out
-  out="$(HISTFILE="$HISTFILE" command pistasho search --query "$LBUFFER" </dev/tty)"
-  local ret=$?
+_pistasho_ask() {{
+  local out ret
+  local -a parts
+  # HISTFILE is a plain zsh variable; pass it along so history can be read
+  out="$(HISTFILE="$HISTFILE" command pistasho ask --prompt --format zsh --initial "$BUFFER" </dev/tty)"
+  ret=$?
   if (( ret == 0 )) && [[ -n "$out" ]]; then
-    BUFFER="$out"
+    parts=("${{(@0)out}}")
+    BUFFER="${{parts[1]}}"
     CURSOR=${{#BUFFER}}
+    zle reset-prompt
+    [[ -n "${{parts[2]}}" ]] && zle -M "${{parts[2]}}"
+  else
+    zle reset-prompt
+    (( ret == 1 )) && [[ -n "$out" ]] && zle -M "$out"
   fi
-  zle reset-prompt
   return 0
 }}
-zle -N _pistasho_search
-bindkey -M emacs '{key}' _pistasho_search
-bindkey -M viins '{key}' _pistasho_search
+zle -N _pistasho_ask
+bindkey -M emacs '{key}' _pistasho_ask
+bindkey -M viins '{key}' _pistasho_ask
 "#
     )
 }
@@ -77,6 +87,18 @@ mod tests {
             !line.contains("'#{pane_id}'"),
             "a quoted format is not expanded by display-popup"
         );
+    }
+
+    /// ADR 0001: Ctrl-Space is the only entry point in zsh.
+    #[test]
+    fn zsh_widget_is_the_question_one() {
+        let out = zsh(&Config::default());
+        assert!(out.contains("zle -N _pistasho_ask"));
+        assert!(out.contains("bindkey -M emacs '^ ' _pistasho_ask"));
+        assert!(out.contains("ask --prompt --format zsh"));
+        assert!(!out.contains("_pistasho_search"), "the Ctrl-G widget is gone");
+        // the widget must pass HISTFILE along: it is a plain zsh variable, not exported
+        assert!(out.contains("HISTFILE=\"$HISTFILE\""));
     }
 
     #[test]

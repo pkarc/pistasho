@@ -4,9 +4,9 @@
 
 > *pista* + *sh*: the hint for the command you need, without leaving the terminal.
 
-Press `Ctrl-G` in zsh, search across [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, pick one, fill in the `{{placeholders}}`, and the command lands on your prompt. **It never runs by itself**: the final Enter is always yours.
+Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phase 1** (searcher). The natural-language question mode, Laya and the LLM fallback come later; see [Roadmap](#roadmap).
+Status: **phase 2 in progress**. Questions are answered locally with BM25 over a full-text index. Alternatives for a wrong answer, embeddings, installing a missing tool and risk warnings come next; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
 
 ## Installation
 
@@ -31,14 +31,19 @@ pistasho init tmux >> ~/.tmux.conf
 
 | Where | Key | What it does |
 |---|---|---|
-| zsh | `Ctrl-G` | Opens the searcher using whatever you already typed as the initial query |
+| zsh | `Ctrl-Space` | Takes over the prompt line (` ✦ ask `): type a question, `Enter` puts the best command on the prompt. Text already on the prompt becomes the question |
+| question | `Enter` | Resolve; if the command has placeholders, asks for their values |
+| question | `Tab` (empty line) | Explore everything: your cheats, history and tldr |
+| question | `Esc` / `Ctrl-C` | Cancel, the prompt stays as it was |
 | tmux | `prefix + g` | Opens the searcher in a popup and sends the command to the pane |
-| searcher | `↑ ↓` / `Ctrl-P Ctrl-N` | Move |
-| searcher | `Enter` | Pick; if it has placeholders, asks for their values |
-| searcher | `Tab` | Insert the template as is, without filling |
-| searcher | `Esc` | Cancel |
+| list | `↑ ↓` / `Ctrl-P Ctrl-N` | Move |
+| list | `Enter` | Pick; if it has placeholders, asks for their values |
+| list | `Tab` | Insert the template as is, without filling |
+| list | `Esc` | Cancel |
 | fill-in | `Enter` / `Tab` / `Shift-Tab` | Next / skip / back |
 | fill-in | `Esc` | Insert with the placeholders still missing |
+
+`Ctrl-Space` is `keys.ask` in `config.toml` (zsh `bindkey` notation, `"^ "`). Some desktops use `Ctrl-Space` to switch the input method; change the key if that gets in the way.
 
 Source labels: `tldr` (tldr pages), `mine` (your cheatsheet), `hist` (your zsh history).
 
@@ -57,7 +62,7 @@ pistasho eval eval/questions.toml [--mode fuzzy|bm25]     # measures searcher ac
 
 ### Searcher height
 
-In zsh the searcher opens compactly below the prompt (40% of the screen by default). Change it with `[ui] height` in `config.toml` (`40%`, a number of lines, or `full`) or with `pistasho search --height`. The tmux popup always uses its full area.
+In zsh the lists and the placeholder fill-in open compactly below the prompt (40% of the screen by default). Change it with `[ui] height` in `config.toml` (`40%`, a number of lines, or `full`) or with `pistasho search --height`. The fill-in after a question always uses a short fixed height. The tmux popup always uses its full area.
 
 ## Language
 
