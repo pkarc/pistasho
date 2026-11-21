@@ -73,20 +73,32 @@ fn tail(s: &str, max: usize) -> String {
     s.chars().skip(n.saturating_sub(max)).collect()
 }
 
-fn badge() -> &'static str {
-    tr(" ✦ ask ", " ✦ pregunta ")
+/// The badge on the left of the line and the hint on its right.
+struct LineStyle {
+    badge: &'static str,
+    hint: &'static str,
 }
 
-fn hint() -> &'static str {
-    tr(
-        "⏎ ask · tab explore · esc exit",
-        "⏎ preguntar · tab explorar · esc salir",
-    )
+fn ask_style() -> LineStyle {
+    LineStyle {
+        badge: tr(" ✦ ask ", " ✦ pregunta "),
+        hint: tr(
+            "⏎ ask · tab explore · esc exit",
+            "⏎ preguntar · tab explorar · esc salir",
+        ),
+    }
+}
+
+fn edit_style() -> LineStyle {
+    LineStyle {
+        badge: tr(" ✎ edit ", " ✎ editar "),
+        hint: tr("⏎ accept · esc cancel", "⏎ aceptar · esc cancelar"),
+    }
 }
 
 /// Redraws the whole line: badge, question, and the hint on the right when there is room.
-fn draw(out: &mut impl Write, text: &str, width: usize) -> Result<()> {
-    let badge = badge();
+fn draw(out: &mut impl Write, style: &LineStyle, text: &str, width: usize) -> Result<()> {
+    let badge = style.badge;
     let room = width.saturating_sub(cells(badge) + 2);
     let shown = tail(text, room);
     queue!(out, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
@@ -102,7 +114,7 @@ fn draw(out: &mut impl Write, text: &str, width: usize) -> Result<()> {
         Print(&shown)
     )?;
     let cursor_col = cells(badge) + 1 + cells(&shown);
-    let hint = hint();
+    let hint = style.hint;
     if cursor_col + 2 + cells(hint) <= width {
         queue!(
             out,
@@ -126,6 +138,19 @@ fn clear_line(out: &mut impl Write) -> Result<()> {
 /// Reads the question on the current line. `initial` pre-fills it (the text that was already on
 /// the prompt), editable. The line is left empty on return, whatever the outcome.
 pub fn read_question(initial: &str) -> Result<Answer> {
+    read_line(&ask_style(), initial, true)
+}
+
+/// A one-line editor for a command: `initial` pre-filled, `Enter` accepts, `Esc` gives up
+/// (`None`). Newlines in `initial` become spaces, so do not offer it for multiline commands.
+pub fn edit_command(initial: &str) -> Result<Option<String>> {
+    Ok(match read_line(&edit_style(), initial, false)? {
+        Answer::Question(text) => Some(text),
+        _ => None,
+    })
+}
+
+fn read_line(style: &LineStyle, initial: &str, tab_explores: bool) -> Result<Answer> {
     let mut out = tty()?;
     enable_raw_mode()?;
     let _raw = RawMode;
@@ -133,7 +158,7 @@ pub fn read_question(initial: &str) -> Result<Answer> {
 
     let answer = loop {
         let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
-        draw(&mut out, &text, width)?;
+        draw(&mut out, style, &text, width)?;
         let Event::Key(key) = event::read()? else { continue };
         if key.kind != KeyEventKind::Press {
             continue;
@@ -143,7 +168,7 @@ pub fn read_question(initial: &str) -> Result<Answer> {
             KeyCode::Enter if !text.trim().is_empty() => break Answer::Question(text.trim().to_string()),
             KeyCode::Esc => break Answer::Cancelled,
             KeyCode::Char('c' | 'g') if ctrl => break Answer::Cancelled,
-            KeyCode::Tab if text.trim().is_empty() => break Answer::Explore,
+            KeyCode::Tab if tab_explores && text.trim().is_empty() => break Answer::Explore,
             KeyCode::Backspace => {
                 text.pop();
             }
@@ -213,7 +238,7 @@ pub fn with_spinner<T>(work: impl FnOnce() -> T) -> Result<T> {
                         Clear(ClearType::CurrentLine),
                         SetBackgroundColor(MAG),
                         SetForegroundColor(DARK),
-                        Print(badge()),
+                        Print(ask_style().badge),
                         ResetColor,
                         SetForegroundColor(GRAY),
                         Print(format!(
@@ -252,10 +277,10 @@ mod tests {
     #[test]
     fn the_hint_only_shows_when_it_fits() {
         let mut wide = Vec::new();
-        draw(&mut wide, "hola", 80).unwrap();
+        draw(&mut wide, &ask_style(), "hola", 80).unwrap();
         assert!(String::from_utf8_lossy(&wide).contains("esc exit"));
         let mut narrow = Vec::new();
-        draw(&mut narrow, "hola", 20).unwrap();
+        draw(&mut narrow, &ask_style(), "hola", 20).unwrap();
         assert!(!String::from_utf8_lossy(&narrow).contains("esc exit"));
     }
 
@@ -263,8 +288,8 @@ mod tests {
     fn drawing_never_overflows_the_width() {
         let mut out = Vec::new();
         let long = "x".repeat(300);
-        draw(&mut out, &long, 40).unwrap();
+        draw(&mut out, &ask_style(), &long, 40).unwrap();
         let s = String::from_utf8_lossy(&out);
-        assert_eq!(s.matches('x').count(), 40 - cells(badge()) - 2);
+        assert_eq!(s.matches('x').count(), 40 - cells(ask_style().badge) - 2);
     }
 }

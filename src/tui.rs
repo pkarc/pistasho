@@ -2,6 +2,7 @@
 //! and the zsh widget can capture the chosen command.
 
 use crate::config::Height;
+use crate::devices;
 use crate::i18n::tr;
 use crate::index::{Entry, Source};
 use crate::placeholders::{self, Part};
@@ -38,6 +39,7 @@ const GREEN: Color = Color::Rgb(0x9e, 0xce, 0x6a);
 const YEL: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const ORANGE: Color = Color::Rgb(0xff, 0x9e, 0x64);
 const SEL: Color = Color::Rgb(0x28, 0x34, 0x57);
+const RED: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 
 pub enum Outcome {
     /// The command, and where it came from (`tldr · common/fc`, `cheats.toml`, `history`);
@@ -75,24 +77,89 @@ pub struct Options {
     pub mode: ListMode,
 }
 
+/// Removable devices offered for a placeholder that stands for one, and the disks left out.
+/// Only these can be picked: a typo or a hasty Enter must not point `mkfs` at the system disk.
+struct Devices {
+    offered: Vec<devices::Device>,
+    /// Names of the disks that are not offered, for the note under the list.
+    hidden: Vec<String>,
+    sel: usize,
+}
+
+impl Devices {
+    fn from_list(all: &[devices::Device]) -> Self {
+        Self {
+            offered: devices::removable(all).into_iter().cloned().collect(),
+            hidden: devices::hidden_disks(all)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            sel: 0,
+        }
+    }
+}
+
+/// Rows the device list can show at once (the box adds the borders and the note).
+const DEVICE_ROWS: usize = 4;
+
 struct Fill {
     template: String,
     names: Vec<String>,
     values: Vec<Option<String>>,
     cur: usize,
     input: String,
+    /// Which placeholders stand for a device.
+    is_device: Vec<bool>,
+    devices: Option<Devices>,
 }
 
 impl Fill {
+    /// Asks `lsblk` only if the template has a device placeholder.
     fn new(template: &str) -> Self {
+        let wants = placeholders::names(template)
+            .iter()
+            .any(|n| devices::placeholder_names_a_device(n));
+        let list = if wants { devices::lsblk().ok() } else { None };
+        Self::with_devices(template, list.as_deref())
+    }
+
+    fn with_devices(template: &str, all: Option<&[devices::Device]>) -> Self {
         let names = placeholders::names(template);
         Self {
             template: template.to_string(),
             values: vec![None; names.len()],
+            is_device: names
+                .iter()
+                .map(|n| devices::placeholder_names_a_device(n))
+                .collect(),
             names,
             cur: 0,
             input: String::new(),
+            devices: all.map(Devices::from_list),
         }
+    }
+
+    /// The current placeholder is a device and there are removable ones to choose from: the
+    /// list takes the place of the text input.
+    fn picking(&self) -> bool {
+        self.is_device[self.cur]
+            && self.values[self.cur].is_none()
+            && self.devices.as_ref().is_some_and(|d| !d.offered.is_empty())
+    }
+
+    /// Moves to the next placeholder, or finishes with the filled-in command.
+    fn advance(&mut self, origin: String) -> Option<Outcome> {
+        self.cur += 1;
+        if self.cur >= self.names.len() {
+            return Some(Outcome::Selected(
+                placeholders::fill(&self.template, &self.values),
+                origin,
+            ));
+        }
+        if let Some(prev) = &self.values[self.cur] {
+            self.input = prev.clone();
+        }
+        None
     }
 }
 
@@ -262,9 +329,16 @@ pub fn run(entries: &[Entry], opts: Options) -> Result<Outcome> {
         .is_some_and(placeholders::has_placeholders);
     let term_rows = terminal_rows();
     let compact = !matches!(opts.mode, ListMode::Search);
+    // a device placeholder swaps the one-line input for a list of up to DEVICE_ROWS devices
+    let device_rows = opts.start_fill.as_deref().is_some_and(|t| {
+        placeholders::names(t)
+            .iter()
+            .any(|n| devices::placeholder_names_a_device(n))
+    });
     let inline_rows = if fill_only {
         // input box + command preview + hint line, whatever `ui.height` says
-        Some(FILL_ONLY_ROWS.min(term_rows.saturating_sub(1).max(1)))
+        let rows = FILL_ONLY_ROWS + if device_rows { DEVICE_ROWS as u16 } else { 0 };
+        Some(rows.min(term_rows.saturating_sub(1).max(1)))
     } else if compact {
         Some(COMPACT_ROWS.min(term_rows.saturating_sub(1).max(1)))
     } else {
@@ -436,6 +510,115 @@ fn draw_install(f: &mut Frame, info: &InstallBox) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+// ---------------------------------------------------------------- destructive command box
+
+/// What the red box shows (ADR 0001, case 3 of the cases GIF).
+pub struct RiskBox {
+    pub command: String,
+    /// What the command does, in a sentence.
+    pub effect: String,
+    /// What the device is, when the command writes to one: `SanDisk Ultra  29.8G  vfat`.
+    pub device: Option<String>,
+    /// The fixed rules that matched (`mkfs`, `dd`…).
+    pub signals: String,
+    /// Whether `e` can be offered: a multiline command cannot be edited on one line.
+    pub can_edit: bool,
+}
+
+pub enum RiskChoice {
+    /// Put it on the prompt anyway. It is not run: the Enter that runs it is the user's own.
+    Leave,
+    Edit,
+    Cancel,
+}
+
+fn risk_key(key: KeyEvent, can_edit: bool) -> Option<RiskChoice> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Enter => Some(RiskChoice::Leave),
+        KeyCode::Char('e') if !ctrl && can_edit => Some(RiskChoice::Edit),
+        KeyCode::Esc | KeyCode::Char('n') if !ctrl => Some(RiskChoice::Cancel),
+        KeyCode::Char('c' | 'g') if ctrl => Some(RiskChoice::Cancel),
+        _ => None,
+    }
+}
+
+fn risk_box_rows(info: &RiskBox) -> u16 {
+    // 2 borders, the title is on the border; command, effect, signals, a blank line and the keys
+    2 + 3 + 1 + 1 + u16::from(info.device.is_some())
+}
+
+/// Shows why a command is dangerous and waits for the user to leave it, edit it or drop it.
+/// Nothing is run here, and leaving it only types it on the prompt.
+pub fn confirm_risk(info: &RiskBox) -> Result<RiskChoice> {
+    let rows = risk_box_rows(info).min(terminal_rows().saturating_sub(1).max(1));
+    let mut screen = Screen::open(Some(rows))?;
+    let choice = loop {
+        screen.terminal.draw(|f| draw_risk(f, info))?;
+        let Event::Key(key) = event::read()? else { continue };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        if let Some(choice) = risk_key(key, info.can_edit) {
+            break choice;
+        }
+    };
+    screen.close()?;
+    Ok(choice)
+}
+
+fn draw_risk(f: &mut Frame, info: &RiskBox) {
+    let b = Block::bordered()
+        .border_style(Style::default().fg(RED))
+        .title(Span::styled(
+            format!(" ⚠ {} ", tr("destructive command", "comando destructivo")),
+            Style::default().fg(RED).add_modifier(Modifier::BOLD),
+        ));
+    let inner = b.inner(f.area());
+    f.render_widget(b, f.area());
+
+    let field = |label: &str, value: &str, color: Color| {
+        Line::from(vec![
+            Span::styled(format!(" {label:<11}"), Style::default().fg(GRAY)),
+            Span::styled(
+                value.to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ])
+    };
+    let key = |k: &str, text: &str, color: Color| {
+        vec![
+            Span::styled(
+                format!("[{k}]"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {text}   "), Style::default().fg(FG)),
+        ]
+    };
+    let mut keys = vec![Span::raw(" ")];
+    keys.extend(key("⏎", tr("leave on the prompt", "dejar en el prompt"), GREEN));
+    if info.can_edit {
+        keys.extend(key("e", tr("edit", "editar"), YEL));
+    }
+    keys.extend(key("esc", tr("cancel", "cancelar"), GRAY));
+
+    let mut lines = vec![
+        field(tr("Command:", "Comando:"), &info.command, FG),
+        field(tr("Effect:", "Efecto:"), &info.effect, RED),
+    ];
+    if let Some(device) = &info.device {
+        lines.push(field(tr("Device:", "Dispositivo:"), device, YEL));
+    }
+    lines.push(field(
+        tr("Signals:", "Señales:"),
+        &format!("{} {}", tr("fixed rule", "regla fija"), info.signals),
+        FG,
+    ));
+    lines.push(Line::raw(""));
+    lines.push(Line::from(keys));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn ctrl(key: &KeyEvent, c: char) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(c)
 }
@@ -509,6 +692,32 @@ fn on_fill_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
     if ctrl(&key, 'c') {
         return Some(Outcome::Cancelled);
     }
+    if fill.picking() {
+        // a device placeholder: choose among the removable devices, nothing is typed
+        let cur = fill.cur;
+        let devs = fill.devices.as_mut()?;
+        match key.code {
+            KeyCode::Up => devs.sel = devs.sel.saturating_sub(1),
+            KeyCode::Char('p') if ctrl(&key, 'p') => devs.sel = devs.sel.saturating_sub(1),
+            KeyCode::Down if devs.sel + 1 < devs.offered.len() => devs.sel += 1,
+            KeyCode::Char('n') if ctrl(&key, 'n') && devs.sel + 1 < devs.offered.len() => devs.sel += 1,
+            KeyCode::Enter => {
+                fill.values[cur] = Some(devs.offered[devs.sel].path.clone());
+                return fill.advance(origin);
+            }
+            // leave it as `{{placeholder}}`, to be dealt with on the prompt
+            KeyCode::Tab => return fill.advance(origin),
+            KeyCode::BackTab if cur > 0 => {
+                fill.cur -= 1;
+                fill.input = fill.values[fill.cur].clone().unwrap_or_default();
+                if fill.is_device[fill.cur] {
+                    fill.values[fill.cur] = None;
+                }
+            }
+            _ => {}
+        }
+        return None;
+    }
     match key.code {
         KeyCode::Enter | KeyCode::Tab => {
             let v = std::mem::take(&mut fill.input);
@@ -517,20 +726,15 @@ fn on_fill_key(app: &mut App, key: KeyEvent) -> Option<Outcome> {
             } else {
                 Some(v)
             };
-            fill.cur += 1;
-            if fill.cur >= fill.names.len() {
-                return Some(Outcome::Selected(
-                    placeholders::fill(&fill.template, &fill.values),
-                    origin,
-                ));
-            }
-            if let Some(prev) = &fill.values[fill.cur] {
-                fill.input = prev.clone();
-            }
+            return fill.advance(origin);
         }
         KeyCode::BackTab if fill.cur > 0 => {
             fill.cur -= 1;
             fill.input = fill.values[fill.cur].clone().unwrap_or_default();
+            if fill.is_device[fill.cur] {
+                // back on a device: choose again
+                fill.values[fill.cur] = None;
+            }
         }
         KeyCode::Backspace => {
             fill.input.pop();
@@ -573,7 +777,7 @@ fn draw(f: &mut Frame, app: &mut App) {
     let compact = !matches!(app.mode, ListMode::Search);
     if app.fill_only || (compact && app.fill.is_some()) {
         let [top, preview, footer] = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(fill_top_height(app)),
             Constraint::Length(3),
             Constraint::Length(1),
         ])
@@ -581,7 +785,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         draw_fill(f, app, top);
         draw_list(f, app, preview);
         f.render_widget(
-            Paragraph::new(Line::styled(footer_hint(true), Style::default().fg(GRAY))),
+            Paragraph::new(Line::styled(fill_hint(app), Style::default().fg(GRAY))),
             footer,
         );
         return;
@@ -591,7 +795,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let [top, list, detail, footer] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(fill_top_height(app)),
         Constraint::Min(3),
         Constraint::Length(4),
         Constraint::Length(1),
@@ -606,13 +810,27 @@ fn draw(f: &mut Frame, app: &mut App) {
     draw_list(f, app, list);
     draw_detail(f, app, detail);
 
+    let hint = if app.fill.is_some() {
+        fill_hint(app)
+    } else {
+        footer_hint(false)
+    };
     f.render_widget(
-        Paragraph::new(Line::styled(
-            footer_hint(app.fill.is_some()),
-            Style::default().fg(GRAY),
-        )),
+        Paragraph::new(Line::styled(hint, Style::default().fg(GRAY))),
         footer,
     );
+}
+
+/// Key hints while filling in placeholders; different while a device is being chosen.
+fn fill_hint(app: &App) -> &'static str {
+    if app.fill.as_ref().is_some_and(Fill::picking) {
+        tr(
+            " ↑↓ move · ⏎ choose · tab leave unfilled · shift-tab back · esc insert as is · ctrl-c cancel",
+            " ↑↓ mover · ⏎ elegir · tab dejar sin rellenar · shift-tab volver · esc insertar así · ctrl-c cancelar",
+        )
+    } else {
+        footer_hint(true)
+    }
 }
 
 /// Key hints for the last line, for the placeholder fill-in or for the list.
@@ -656,8 +874,94 @@ fn draw_query(f: &mut Frame, app: &App, area: Rect) {
     f.set_cursor_position((x.min(inner.right().saturating_sub(1)), inner.y));
 }
 
+/// Height of the box at the top of the fill-in: the input line, or the list of devices.
+fn fill_top_height(app: &App) -> u16 {
+    match app.fill.as_ref().filter(|f| f.picking()) {
+        Some(fill) => {
+            let devs = fill
+                .devices
+                .as_ref()
+                .map_or(0, |d| d.offered.len().min(DEVICE_ROWS));
+            let note = u16::from(fill.devices.as_ref().is_some_and(|d| !d.hidden.is_empty()));
+            2 + devs as u16 + note
+        }
+        None => 3,
+    }
+}
+
+fn draw_device_picker(f: &mut Frame, fill: &Fill, area: Rect) {
+    let Some(devs) = &fill.devices else { return };
+    let title = format!(" {} (lsblk) ", tr("device", "dispositivo"));
+    let b = Block::bordered()
+        .border_style(Style::default().fg(ORANGE))
+        .title(Span::styled(
+            title,
+            Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
+        ));
+    let inner = b.inner(area);
+    f.render_widget(b, area);
+
+    // a window of the list that keeps the selection in view
+    let start = devs.sel.saturating_sub(DEVICE_ROWS - 1);
+    let mut lines: Vec<Line> = devs
+        .offered
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(DEVICE_ROWS)
+        .map(|(i, d)| {
+            let selected = i == devs.sel;
+            let bg = |style: Style| if selected { style.bg(SEL) } else { style };
+            let mut spans = vec![
+                Span::styled(if selected { "▌ " } else { "  " }, bg(Style::default().fg(MAG))),
+                Span::styled(
+                    d.path.clone(),
+                    bg(Style::default().fg(FG).add_modifier(Modifier::BOLD)),
+                ),
+            ];
+            let rest: Vec<String> = [
+                d.model.clone(),
+                Some(d.size.clone()),
+                d.fstype.clone(),
+                d.mountpoint.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            spans.push(Span::styled(
+                format!("  {}", rest.join("  ")),
+                bg(Style::default().fg(GRAY)),
+            ));
+            spans.push(Span::styled(
+                format!("  {}", tr("removable", "extraíble")),
+                bg(Style::default().fg(GREEN)),
+            ));
+            let mut line = Line::from(spans);
+            if selected {
+                line = line.style(Style::default().bg(SEL));
+            }
+            line
+        })
+        .collect();
+    if !devs.hidden.is_empty() {
+        lines.push(Line::styled(
+            format!(
+                "  {} {}",
+                devs.hidden.join(" / "),
+                tr("hidden: not removable", "ocultos: no extraíbles")
+            ),
+            Style::default().fg(GRAY),
+        ));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_fill(f: &mut Frame, app: &App, area: Rect) {
     let fill = app.fill.as_ref().unwrap();
+    if fill.picking() {
+        draw_device_picker(f, fill, area);
+        return;
+    }
     let name = placeholders::display_name(&fill.names[fill.cur]).to_string();
     let label = format!("{name} › ");
     let line = Line::from(vec![
@@ -1053,6 +1357,177 @@ mod tests {
         assert_eq!(install_box_rows(&info), bare + 1);
         info.alternative = Some("find . | sort".into());
         assert_eq!(install_box_rows(&info), bare + 2);
+    }
+
+    fn risk_choice(key: KeyEvent, can_edit: bool) -> &'static str {
+        match risk_key(key, can_edit) {
+            Some(RiskChoice::Leave) => "leave",
+            Some(RiskChoice::Edit) => "edit",
+            Some(RiskChoice::Cancel) => "cancel",
+            None => "nothing",
+        }
+    }
+
+    /// In this box Enter is the safe key: leaving a command on the prompt runs nothing.
+    #[test]
+    fn the_risk_box_keys() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(risk_choice(press(KeyCode::Enter, none), true), "leave");
+        assert_eq!(risk_choice(press(KeyCode::Char('e'), none), true), "edit");
+        assert_eq!(
+            risk_choice(press(KeyCode::Char('e'), none), false),
+            "nothing",
+            "multiline: no editing"
+        );
+        assert_eq!(risk_choice(press(KeyCode::Esc, none), true), "cancel");
+        assert_eq!(risk_choice(press(KeyCode::Char('n'), none), true), "cancel");
+        assert_eq!(
+            risk_choice(press(KeyCode::Char('c'), KeyModifiers::CONTROL), true),
+            "cancel"
+        );
+        for code in [
+            KeyCode::Char('y'),
+            KeyCode::Char(' '),
+            KeyCode::Tab,
+            KeyCode::Char('x'),
+        ] {
+            assert_eq!(risk_choice(press(code, none), true), "nothing", "{code:?}");
+        }
+    }
+
+    #[test]
+    fn the_risk_box_grows_with_the_device_row() {
+        let mut info = RiskBox {
+            command: "x".into(),
+            effect: "y".into(),
+            device: None,
+            signals: "mkfs".into(),
+            can_edit: true,
+        };
+        let bare = risk_box_rows(&info);
+        info.device = Some("/dev/sdb1".into());
+        assert_eq!(risk_box_rows(&info), bare + 1);
+    }
+
+    const DISKS: &str = r#"{"blockdevices":[
+      {"name":"sda","model":"Samsung SSD","size":"500G","fstype":null,"mountpoint":null,"rm":false,"path":"/dev/sda",
+       "children":[{"name":"sda1","model":null,"size":"500G","fstype":"ext4","mountpoint":"/","rm":false,"path":"/dev/sda1"}]},
+      {"name":"nvme0n1","model":"WD Black","size":"1T","fstype":null,"mountpoint":null,"rm":false,"path":"/dev/nvme0n1"},
+      {"name":"sdb","model":"SanDisk Ultra","size":"29.8G","fstype":null,"mountpoint":null,"rm":true,"path":"/dev/sdb",
+       "children":[{"name":"sdb1","model":null,"size":"29.8G","fstype":"vfat","mountpoint":"/media/pk/USB","rm":true,"path":"/dev/sdb1"}]}
+    ]}"#;
+
+    fn device_app<'a>(entries: &'a [Entry], template: &str, json: &str) -> App<'a> {
+        let all = devices::parse_lsblk(json).unwrap();
+        let mut a = app(entries, ListMode::Explore);
+        a.fill = Some(Fill::with_devices(template, Some(&all)));
+        a
+    }
+
+    fn press_key(a: &mut App, code: KeyCode) -> Option<Outcome> {
+        on_fill_key(a, KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    /// The GIF case: of every disk on the machine only the USB stick can be picked, and the
+    /// device goes into the command without typing it.
+    #[test]
+    fn a_device_placeholder_offers_only_the_removable_device() {
+        let e = entries();
+        let mut a = device_app(&e, "sudo mkfs.ext4 {{/dev/sdX}}", DISKS);
+        let fill = a.fill.as_ref().unwrap();
+        assert!(fill.picking());
+        let devs = fill.devices.as_ref().unwrap();
+        assert_eq!(
+            devs.offered.iter().map(|d| d.path.as_str()).collect::<Vec<_>>(),
+            vec!["/dev/sdb1"],
+            "not sda, nvme0n1 or their partitions"
+        );
+        assert_eq!(devs.hidden, vec!["sda", "nvme0n1"]);
+        // typing does nothing while the list is up
+        assert!(press_key(&mut a, KeyCode::Char('x')).is_none());
+        assert_eq!(a.fill.as_ref().unwrap().input, "");
+        match press_key(&mut a, KeyCode::Enter) {
+            Some(Outcome::Selected(cmd, _)) => assert_eq!(cmd, "sudo mkfs.ext4 /dev/sdb1"),
+            _ => panic!("expected the command with the device filled in"),
+        }
+    }
+
+    #[test]
+    fn the_device_list_moves_and_can_be_left_unfilled() {
+        let two = DISKS.replace(r#""children":[{"name":"sdb1""#, r#""children":[{"name":"sdb2","model":null,"size":"1G","fstype":"ext4","mountpoint":null,"rm":true,"path":"/dev/sdb2"},{"name":"sdb1""#);
+        let e = entries();
+        let mut a = device_app(&e, "dd if=x.iso of={{device}}", &two);
+        assert_eq!(
+            a.fill.as_ref().unwrap().devices.as_ref().unwrap().offered.len(),
+            2
+        );
+        press_key(&mut a, KeyCode::Down);
+        press_key(&mut a, KeyCode::Down); // at the end: stays
+        assert_eq!(a.fill.as_ref().unwrap().devices.as_ref().unwrap().sel, 1);
+        press_key(&mut a, KeyCode::Up);
+        assert_eq!(a.fill.as_ref().unwrap().devices.as_ref().unwrap().sel, 0);
+        // Tab leaves the placeholder as it is
+        match press_key(&mut a, KeyCode::Tab) {
+            Some(Outcome::Selected(cmd, _)) => assert_eq!(cmd, "dd if=x.iso of={{device}}"),
+            _ => panic!("expected the command with the placeholder left"),
+        }
+    }
+
+    #[test]
+    fn with_nothing_removable_the_user_types_the_device() {
+        let only_system = r#"{"blockdevices":[{"name":"sda","model":"x","size":"1T","fstype":null,"mountpoint":null,"rm":false,"path":"/dev/sda"}]}"#;
+        let e = entries();
+        let mut a = device_app(&e, "mkfs.ext4 {{dispositivo}}", only_system);
+        assert!(!a.fill.as_ref().unwrap().picking(), "an empty list is no list");
+        press_key(&mut a, KeyCode::Char('/'));
+        assert_eq!(a.fill.as_ref().unwrap().input, "/");
+    }
+
+    #[test]
+    fn other_placeholders_are_typed_as_always_and_never_ask_lsblk() {
+        let e = entries();
+        // the plain constructor must not call lsblk for a template with no device in it
+        let fill = Fill::new("tar xf {{file}} --directory {{dir}}");
+        assert!(fill.devices.is_none());
+        assert!(!fill.picking());
+        let mut a = device_app(&e, "ssh {{user}}@{{host}}", DISKS);
+        assert!(!a.fill.as_ref().unwrap().picking());
+        press_key(&mut a, KeyCode::Char('r'));
+        assert_eq!(a.fill.as_ref().unwrap().input, "r");
+    }
+
+    #[test]
+    fn a_device_after_a_text_placeholder_is_chosen_in_its_turn() {
+        let e = entries();
+        let mut a = device_app(&e, "dd if={{file}} of={{/dev/sdX}}", DISKS);
+        assert!(!a.fill.as_ref().unwrap().picking(), "first the file");
+        for c in "a.iso".chars() {
+            press_key(&mut a, KeyCode::Char(c));
+        }
+        assert!(press_key(&mut a, KeyCode::Enter).is_none());
+        assert!(a.fill.as_ref().unwrap().picking(), "now the device");
+        match press_key(&mut a, KeyCode::Enter) {
+            Some(Outcome::Selected(cmd, _)) => assert_eq!(cmd, "dd if=a.iso of=/dev/sdb1"),
+            _ => panic!("expected both filled"),
+        }
+        // going back to the device chooses it again
+        let mut b = device_app(&e, "dd if={{file}} of={{/dev/sdX}}", DISKS);
+        for c in "a.iso".chars() {
+            press_key(&mut b, KeyCode::Char(c));
+        }
+        press_key(&mut b, KeyCode::Enter);
+        press_key(&mut b, KeyCode::BackTab);
+        assert_eq!(b.fill.as_ref().unwrap().input, "a.iso");
+    }
+
+    #[test]
+    fn the_device_box_is_as_tall_as_its_list() {
+        let e = entries();
+        let a = device_app(&e, "mkfs.ext4 {{/dev/sdX}}", DISKS);
+        // 2 borders + one removable device + the note about the hidden disks
+        assert_eq!(fill_top_height(&a), 4);
+        let b = device_app(&e, "echo {{x}}", DISKS);
+        assert_eq!(fill_top_height(&b), 3, "the usual one-line input");
     }
 
     #[test]

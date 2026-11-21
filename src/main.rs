@@ -2,6 +2,7 @@ mod alternatives;
 mod ask;
 mod config;
 mod db;
+mod devices;
 mod eval;
 mod history;
 mod i18n;
@@ -9,6 +10,7 @@ mod index;
 mod packages;
 mod placeholders;
 mod prompt;
+mod risk;
 mod search;
 mod shell;
 mod system;
@@ -190,9 +192,16 @@ fn run() -> Result<ExitCode> {
             match outcome {
                 tui::Outcome::Cancelled => Ok(ExitCode::from(130)),
                 tui::Outcome::Selected(cmd, _origin) => {
+                    // the same checks as for an answer: a destructive command shows the red box
+                    let Some(fin) = finalize(cmd, String::new())? else {
+                        return Ok(ExitCode::from(130));
+                    };
+                    if !fin.message.is_empty() {
+                        eprintln!("pistasho: {}", fin.message);
+                    }
                     match send_to {
-                        Some(pane) => send_to_tmux(&pane, &cmd)?,
-                        None => println!("{cmd}"),
+                        Some(pane) => send_to_tmux(&pane, &fin.command)?,
+                        None => println!("{}", fin.command),
                     }
                     Ok(ExitCode::SUCCESS)
                 }
@@ -299,8 +308,10 @@ fn run() -> Result<ExitCode> {
                 return match explore_list(&cfg)? {
                     None => Ok(ExitCode::from(130)),
                     Some(cmd) => {
-                        let (cmd, message) = adapt_result(cmd, String::new());
-                        emit(format, &cmd, &message, "", false);
+                        let Some(fin) = finalize(cmd, String::new())? else {
+                            return Ok(ExitCode::from(130));
+                        };
+                        emit(format, &fin.command, &fin.message, "", false, fin.risk);
                         Ok(ExitCode::SUCCESS)
                     }
                 };
@@ -391,12 +402,24 @@ fn report_timing(
 }
 
 /// What the widget gets on stdout with `--format zsh`: `command NUL message NUL question NUL
-/// printed`. The question travels back so the widget can reopen the alternatives for it, and
+/// printed NUL risk NUL label`. The question travels back so the widget can reopen the alternatives for it, and
 /// `printed` is `1` when something other than pistasho's own interface wrote on the terminal
 /// (the package manager), which tells zle to redraw the prompt from the line it is now on.
-fn emit(format: OutputFormat, command: &str, message: &str, question: &str, printed: bool) {
+fn emit(
+    format: OutputFormat,
+    command: &str,
+    message: &str,
+    question: &str,
+    printed: bool,
+    risk: risk::Level,
+) {
     match format {
-        OutputFormat::Zsh => print!("{command}\0{message}\0{question}\0{}", u8::from(printed)),
+        OutputFormat::Zsh => print!(
+            "{command}\0{message}\0{question}\0{}\0{}\0{}",
+            u8::from(printed),
+            risk.name(),
+            risk.label()
+        ),
         OutputFormat::Plain => println!("{command}"),
     }
 }
@@ -613,34 +636,80 @@ fn ask_on_prompt(
             (command, message, question)
         }
     };
-    let (command, mut message) = adapt_result(command, message);
+    let Some(fin) = finalize(command, message)? else {
+        return Ok(ExitCode::from(130));
+    };
+    let mut message = fin.message;
     if !installed_note.is_empty() {
         message.push_str(" · ");
         message.push_str(&installed_note);
     }
     if let Some(pane) = send_to {
-        send_to_tmux(pane, &command)?;
+        send_to_tmux(pane, &fin.command)?;
         return Ok(ExitCode::SUCCESS);
     }
-    emit(format, &command, &message, &question, printed);
+    emit(format, &fin.command, &message, &question, printed, fin.risk);
     Ok(ExitCode::SUCCESS)
 }
 
-/// Puts right the programs this machine has under another name (`fd` → `fdfind` on Debian) in
-/// the command about to be handed over, and says so in the message. Also warns about programs
-/// that are still not installed.
-fn adapt_result(command: String, mut message: String) -> (String, String) {
-    let adapted = packages::adapt(&command);
+/// The command as it is handed over, the line under the prompt, and how dangerous it is.
+struct Final {
+    command: String,
+    message: String,
+    risk: risk::Level,
+}
+
+/// What a command gets before it is handed over (typed on the prompt or sent to a pane):
+/// programs this machine has under another name are put right (`fd` → `fdfind`), the risk rules
+/// look at it, and a destructive one is shown in the red box first, where the user can leave it
+/// on the prompt, edit it, or drop it. `None` means dropped.
+///
+/// Nothing is run: leaving a command on the prompt is writing text.
+fn finalize(command: String, message: String) -> Result<Option<Final>> {
+    let mut command = command;
+    loop {
+        let adapted = packages::adapt(&command);
+        let assessment = risk::assess(&adapted.command);
+        if assessment.level == risk::Level::Destructive {
+            match confirm_destructive(&adapted.command, &assessment)? {
+                tui::RiskChoice::Leave => {}
+                tui::RiskChoice::Cancel => return Ok(None),
+                tui::RiskChoice::Edit => {
+                    // edited text is checked again from the top; giving up goes back to the box
+                    if let Some(edited) = prompt::edit_command(&adapted.command)? {
+                        command = edited;
+                    }
+                    continue;
+                }
+            }
+        }
+        let missing = system::missing_binaries(&adapted.command);
+        let message = final_message(message, &adapted.renames, &missing, &assessment);
+        return Ok(Some(Final {
+            command: adapted.command,
+            message,
+            risk: assessment.level,
+        }));
+    }
+}
+
+/// The line under the prompt: what was said so far, then renames, programs still missing, and
+/// the risk.
+fn final_message(
+    mut message: String,
+    renames: &[(String, String)],
+    missing: &[String],
+    assessment: &risk::Assessment,
+) -> String {
     let mut push = |text: String| {
         if !message.is_empty() {
             message.push_str(" · ");
         }
         message.push_str(&text);
     };
-    for (asked, installed) in &adapted.renames {
+    for (asked, installed) in renames {
         push(format!("{asked} → {installed}"));
     }
-    let missing = system::missing_binaries(&adapted.command);
     if !missing.is_empty() {
         push(format!(
             "⚠ {} {}",
@@ -648,7 +717,74 @@ fn adapt_result(command: String, mut message: String) -> (String, String) {
             tr("not installed", "no instalado")
         ));
     }
-    (adapted.command, message)
+    match assessment.level {
+        risk::Level::Ok => {}
+        risk::Level::Caution => push(format!(
+            "⚠ {} · {}",
+            assessment.level.label(),
+            assessment.effect()
+        )),
+        risk::Level::Destructive => push(format!(
+            "⚠ {} · {}",
+            assessment.level.label(),
+            tr(
+                "review before running — it never runs by itself",
+                "revisa antes de ejecutar — nunca se ejecuta solo"
+            )
+        )),
+    }
+    message
+}
+
+/// Shows the red box for a destructive command: what it does, what device it writes to (from
+/// `lsblk`) and which fixed rule caught it.
+fn confirm_destructive(command: &str, assessment: &risk::Assessment) -> Result<tui::RiskChoice> {
+    let known = if assessment.devices.is_empty() {
+        Vec::new()
+    } else {
+        devices::lsblk().unwrap_or_default()
+    };
+    let device = assessment
+        .devices
+        .first()
+        .map(|path| describe_device(&known, path));
+    tui::confirm_risk(&tui::RiskBox {
+        command: command.to_string(),
+        effect: assessment.effect(),
+        device,
+        signals: assessment.rules(),
+        can_edit: !command.contains('\n'),
+    })
+}
+
+/// What a device in a command is, for the red box: its model, size, filesystem and where it is
+/// mounted, plus a warning when it is not removable (a system disk).
+fn describe_device(known: &[devices::Device], path: &str) -> String {
+    match devices::find(known, path) {
+        Some(d) => {
+            let mut text = d.describe();
+            if let Some(mount) = &d.mountpoint {
+                text = text.replace(
+                    &format!("  {mount}"),
+                    &format!(" · {} {mount}", tr("mounted at", "montado en")),
+                );
+            }
+            if !d.removable {
+                text.push_str(&format!(
+                    " · {}",
+                    tr(
+                        "NOT removable: this looks like a system disk",
+                        "NO es extraíble: parece un disco del sistema"
+                    )
+                ));
+            }
+            text
+        }
+        None => format!(
+            "{path} ({})",
+            tr("not found on this machine", "no existe en esta máquina")
+        ),
+    }
 }
 
 /// The install plan for a program that is not installed, as JSON for `ask --json`.
@@ -771,8 +907,10 @@ fn ask_alternatives(cfg: &Config, question: &str, current: &str, format: OutputF
         None => Ok(ExitCode::from(130)),
         Some((cmd, origin)) => {
             let message = format!("✓ {} · {origin}", tr("replaced", "reemplazado"));
-            let (cmd, message) = adapt_result(cmd, message);
-            emit(format, &cmd, &message, question, false);
+            let Some(fin) = finalize(cmd, message)? else {
+                return Ok(ExitCode::from(130));
+            };
+            emit(format, &fin.command, &fin.message, question, false, fin.risk);
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -865,16 +1003,46 @@ mod tests {
     }
 
     #[test]
-    fn the_final_command_is_checked_for_programs_that_are_not_installed() {
+    fn the_final_message_collects_renames_missing_programs_and_risk() {
         i18n::set(i18n::Lang::En);
-        let (command, message) = adapt_result("pistasho-no-such-program --x".into(), "⚡ local".into());
-        assert_eq!(command, "pistasho-no-such-program --x");
-        assert_eq!(message, "⚡ local · ⚠ pistasho-no-such-program not installed");
-        // everything in place: the message is left alone
-        let (_, message) = adapt_result("ls | sort".into(), "⚡ local".into());
-        assert_eq!(message, "⚡ local");
-        // with no message yet, the warning stands alone
-        let (_, message) = adapt_result("pistasho-no-such-program".into(), String::new());
-        assert_eq!(message, "⚠ pistasho-no-such-program not installed");
+        let ok = risk::assess("ls");
+        assert_eq!(final_message("⚡ local".into(), &[], &[], &ok), "⚡ local");
+        assert_eq!(
+            final_message(String::new(), &[], &["x".into(), "y".into()], &ok),
+            "⚠ x, y not installed"
+        );
+        assert_eq!(
+            final_message("⚡".into(), &[("fd".into(), "fdfind".into())], &[], &ok),
+            "⚡ · fd → fdfind"
+        );
+        let caution = risk::assess("rm -rf build");
+        let m = final_message("⚡".into(), &[], &[], &caution);
+        assert!(m.starts_with("⚡ · ⚠ caution · deletes the folder"), "{m}");
+        let destructive = risk::assess("mkfs.ext4 /dev/sdb1");
+        let m = final_message("⚡".into(), &[], &[], &destructive);
+        assert_eq!(
+            m,
+            "⚡ · ⚠ destructive · review before running — it never runs by itself"
+        );
+    }
+
+    #[test]
+    fn a_device_is_described_by_what_lsblk_knows() {
+        i18n::set(i18n::Lang::En);
+        let known = devices::parse_lsblk(
+            r#"{"blockdevices":[
+              {"name":"sda","model":"Samsung SSD","size":"500G","fstype":null,"mountpoint":null,"rm":false,"path":"/dev/sda"},
+              {"name":"sdb","model":"SanDisk Ultra","size":"29.8G","fstype":"vfat","mountpoint":"/media/pk/USB","rm":true,"path":"/dev/sdb"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            describe_device(&known, "/dev/sdb"),
+            "/dev/sdb  SanDisk Ultra  29.8G  vfat · mounted at /media/pk/USB"
+        );
+        let system = describe_device(&known, "/dev/sda");
+        assert!(system.contains("NOT removable"), "{system}");
+        assert!(describe_device(&known, "/dev/sdz").contains("not found on this machine"));
+        // a placeholder that was never filled in is not a device on this machine either
+        assert!(describe_device(&known, "{{/dev/sdX}}").contains("not found"));
     }
 }

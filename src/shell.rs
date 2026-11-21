@@ -17,6 +17,40 @@ pub fn zsh(cfg: &Config) -> String {
         r#"# pistasho · zsh integration
 # In ~/.zshrc:  eval "$(pistasho init zsh)"
 
+# A flagged line is marked on the right of the prompt (and painted red when destructive) until it
+# is accepted. The paint is tagged `memo=pistasho` so it can be removed without touching what
+# other plugins put in `region_highlight`.
+_pistasho_unmark() {{
+  if [[ -n "$_PISTASHO_MARKED" ]]; then
+    RPROMPT="$_PISTASHO_RPROMPT_SAVED"
+    unset _PISTASHO_MARKED _PISTASHO_RPROMPT_SAVED
+  fi
+  region_highlight=("${{(@)region_highlight:#*memo=pistasho*}}")
+}}
+# $1 is the level (ok, caution, destructive), $2 the label to show
+_pistasho_mark() {{
+  _pistasho_unmark
+  case "$1" in
+    destructive)
+      _PISTASHO_MARKED=1 _PISTASHO_RPROMPT_SAVED="$RPROMPT"
+      RPROMPT="%F{{red}}%B⚠ $2%b%f"
+      region_highlight+=("0 ${{#BUFFER}} fg=red,bold memo=pistasho")
+      ;;
+    caution)
+      _PISTASHO_MARKED=1 _PISTASHO_RPROMPT_SAVED="$RPROMPT"
+      RPROMPT="%F{{yellow}}⚠ $2%f"
+      ;;
+  esac
+}}
+# once the line is edited or cleared the mark no longer describes it: take it off. `_pistasho_unmark`
+# clears the flag first, so the redraw it asks for does not come back here.
+_pistasho_repaint() {{
+  if [[ -n "$_PISTASHO_MARKED" && "$BUFFER" != "$_PISTASHO_LAST_CMD" ]]; then
+    _pistasho_unmark
+    zle reset-prompt
+  fi
+}}
+
 # After a package manager wrote on the terminal: `zle reset-prompt` moves up as many lines as the
 # prompt has beyond the first before it redraws, which would overwrite the last lines of that
 # output. Leave that many blank lines for it to land on.
@@ -43,6 +77,7 @@ _pistasho_ask() {{
     CURSOR=${{#BUFFER}}
     _PISTASHO_LAST_CMD="$BUFFER"
     _PISTASHO_LAST_Q="${{parts[3]:-}}"
+    _pistasho_mark "${{parts[5]:-ok}}" "${{parts[6]:-}}"
     [[ "${{parts[4]:-}}" == 1 ]] && _pistasho_room
     zle reset-prompt
     [[ -n "${{parts[2]}}" ]] && zle -M "${{parts[2]}}"
@@ -57,9 +92,11 @@ _pistasho_ask() {{
 # forget the question when the line is accepted, so it cannot leak into the next prompt
 _pistasho_forget() {{
   unset _PISTASHO_LAST_Q _PISTASHO_LAST_CMD
+  _pistasho_unmark
 }}
 autoload -Uz add-zle-hook-widget
 add-zle-hook-widget zle-line-finish _pistasho_forget
+add-zle-hook-widget zle-line-pre-redraw _pistasho_repaint
 zle -N _pistasho_ask
 bindkey -M emacs '{key}' _pistasho_ask
 bindkey -M viins '{key}' _pistasho_ask
@@ -131,6 +168,11 @@ mod tests {
         assert!(out.contains("ask --alternatives --current \"$BUFFER\""));
         assert!(out.contains("\"$BUFFER\" == \"$_PISTASHO_LAST_CMD\""));
         assert!(out.contains("add-zle-hook-widget zle-line-finish _pistasho_forget"));
+        // a flagged line is marked in RPROMPT and painted without clobbering other plugins
+        assert!(out.contains("memo=pistasho"));
+        assert!(out.contains("RPROMPT=\"%F{red}%B⚠ $2%b%f\""));
+        assert!(out.contains("_pistasho_mark \"${parts[5]:-ok}\""));
+        assert!(out.contains("add-zle-hook-widget zle-line-pre-redraw _pistasho_repaint"));
         // `zle -I` followed by `zle reset-prompt` draws the prompt over the package manager's
         // output (measured in tmux); plain `reset-prompt` is what redraws correctly after it
         assert!(!out.contains("zle -I"));

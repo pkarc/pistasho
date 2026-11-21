@@ -464,6 +464,62 @@ pub fn binaries(cmd: &str) -> Vec<String> {
     names
 }
 
+/// One simple command: the program, its arguments, and where it redirects to. Wrappers such as
+/// `sudo` and `env` are skipped, so `sudo rm -rf /` is `rm` with `-rf` and `/`.
+#[derive(Debug, Default, PartialEq)]
+pub struct Simple {
+    pub program: String,
+    pub args: Vec<String>,
+    /// Targets of `>`, `>>`, `<`, `2>`…, without the operators.
+    pub redirects: Vec<String>,
+}
+
+/// The simple commands of a shell command, in order, including those inside `$(...)`.
+pub fn commands(cmd: &str) -> Vec<Simple> {
+    let starts: std::collections::HashMap<(usize, usize), String> = programs(cmd)
+        .into_iter()
+        .filter_map(|p| Some((p.span?, p.name)))
+        .collect();
+    let mut out: Vec<Simple> = Vec::new();
+    let mut cur: Option<Simple> = None;
+    let mut before: Vec<String> = Vec::new(); // redirects seen before the program (`> f cmd`)
+    let mut redirecting = false;
+
+    for tok in tokenize(cmd) {
+        match tok {
+            Tok::Sep => {
+                out.extend(cur.take());
+                before.clear();
+                redirecting = false;
+            }
+            Tok::Redir => redirecting = true,
+            Tok::Word { text, subs, span } => {
+                if redirecting {
+                    redirecting = false;
+                    match cur.as_mut() {
+                        Some(c) => c.redirects.push(text),
+                        None => before.push(text),
+                    }
+                } else if let Some(name) = starts.get(&span) {
+                    out.extend(cur.take());
+                    cur = Some(Simple {
+                        program: name.clone(),
+                        args: Vec::new(),
+                        redirects: std::mem::take(&mut before),
+                    });
+                } else if let Some(c) = cur.as_mut() {
+                    c.args.push(text);
+                }
+                for sub in subs {
+                    out.extend(commands(&sub));
+                }
+            }
+        }
+    }
+    out.extend(cur);
+    out
+}
+
 /// `cmd` with the program words named in `renames` replaced (`fd` → `fdfind`), wherever they
 /// stand in the command. Programs inside `$(...)` are left alone.
 pub fn rename_programs(cmd: &str, renames: &std::collections::HashMap<String, String>) -> String {
@@ -703,6 +759,63 @@ mod tests {
             "positions are chars, not bytes"
         );
         assert_eq!(rename_programs("fd x", &renames(&[])), "fd x");
+    }
+
+    fn simple(program: &str, args: &[&str], redirects: &[&str]) -> Simple {
+        Simple {
+            program: program.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            redirects: redirects.iter().map(|a| a.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn commands_have_their_arguments_and_redirects() {
+        assert_eq!(commands("sudo rm -rf /"), vec![simple("rm", &["-rf", "/"], &[])]);
+        assert_eq!(
+            commands("ls -la | grep x > out.txt 2>&1"),
+            vec![
+                simple("ls", &["-la"], &[]),
+                simple("grep", &["x"], &["out.txt", "1"])
+            ]
+        );
+        assert_eq!(
+            commands("FOO=1 make -j4 all"),
+            vec![simple("make", &["-j4", "all"], &[])]
+        );
+        assert_eq!(
+            commands("sudo -u bob env X=1 tar x"),
+            vec![simple("tar", &["x"], &[])]
+        );
+        assert_eq!(
+            commands("> log.txt echo hi"),
+            vec![simple("echo", &["hi"], &["log.txt"])]
+        );
+        assert_eq!(
+            commands("find . | xargs rm -f"),
+            vec![simple("find", &["."], &[]), simple("rm", &["-f"], &[])]
+        );
+        assert_eq!(
+            commands("a; b && c"),
+            vec![
+                simple("a", &[], &[]),
+                simple("b", &[], &[]),
+                simple("c", &[], &[])
+            ]
+        );
+        assert_eq!(
+            commands("echo \"a b\" 'c d'"),
+            vec![simple("echo", &["a b", "c d"], &[])]
+        );
+        assert_eq!(commands(""), Vec::<Simple>::new());
+        assert_eq!(commands("FOO=1"), Vec::<Simple>::new());
+    }
+
+    #[test]
+    fn commands_inside_substitutions_are_included() {
+        let c = commands("echo $(rm -rf x) done");
+        assert!(c.contains(&simple("echo", &["$SUB", "done"], &[])), "{c:?}");
+        assert!(c.contains(&simple("rm", &["-rf", "x"], &[])), "{c:?}");
     }
 
     #[test]
