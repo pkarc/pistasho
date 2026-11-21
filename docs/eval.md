@@ -85,3 +85,37 @@ Todo con `pistasho eval --mode bm25` (y `--weights` para los pesos), en rejillas
 ### Qué falla todavía
 
 Los fallos restantes son sobre todo la **distancia semántica español → descripción en inglés** que BM25 no puede salvar: `montar una partición` (→ `mount`), `formatear una usb en ext4` (→ `mkfs`), `contar líneas` (→ `wc`), `ver logs de un servicio` (→ `journalctl`). Eso es lo que atacan los embeddings de la 2.9. El segundo grupo es ruido de palabras muy frecuentes (`archivos`, `texto`) que coinciden con descripciones cortas (`patool`). Los pesos por columna no lo arreglan; son candidatos a probar con los embeddings.
+
+## Tarea 2.9a · Embeddings multilingües: elección del modelo (2026-11-20)
+
+Medido antes de construir nada, con `scripts/embeddings_experiment.py` (Python + fastembed, solo estudio; no es dependencia del proyecto) sobre las 101 preguntas y las entradas de tldr y cheats de la base real (el historial queda fuera). Se compara BM25 (lo que hace `ask` hoy), solo coseno y la fusión por rangos (RRF, k=60), con el texto de cada entrada `herramienta. descripción. alt[:150]`.
+
+### Calidad (top-1 / top-3, sobre 101 preguntas)
+
+| Modelo | BM25 | Solo embeddings | Híbrido (RRF) | Índice completo |
+|---|---|---|---|---|
+| **multilingual-e5-small (int8)** | 35 / 50 | 44 / 54 | **50 / 58** | ≈ 6.5 min |
+| paraphrase-multilingual-MiniLM-L12 | 35 / 50 | 23 / 36 | 39 / 58 | ≈ 9 min |
+| potion-multilingual-128M (estático) | 35 / 50 | — | 40 / 53 | rápido |
+
+(Números absolutos de aciertos sobre 101; el 35/50 de BM25 es el mismo `pistasho eval --mode bm25` con la base de esta máquina.) e5-small gana con claridad y es el único donde solo-embeddings ya supera a BM25. Sube el top-1 en 15 aciertos.
+
+### Coste (máquina del usuario, release)
+
+| Qué | Medido |
+|---|---|
+| Modelo en disco | 118 MB (`model_quantized.onnx` de Xenova) + tokenizador de 17 MB |
+| Binario con `ort` (onnxruntime estático) | 6.4 → ≈ 38 MB |
+| Vector de una pregunta (calentado) | 3–11 ms |
+| Memoria con el modelo cargado | ≈ 570–790 MB de RSS |
+| Cargar el tokenizador (`from_file`) | ≈ 350 ms |
+| Crear la sesión ONNX | ≈ 130 ms con la optimización desactivada, ≈ 190 ms por defecto, ≈ 350 ms con `Level1` |
+| Tokenizador + sesión en paralelo | ≈ 0.4–0.55 s (antes ≈ 1 s en serie con fastembed) |
+
+### Decisión
+
+- **Modelo:** `multilingual-e5-small` int8 (prefijos `query: ` / `passage: `, mean pooling, normalizado).
+- **Vía:** `ort` directo (con `tokenizers`), no `fastembed`: así se fija el archivo exacto, se controla la optimización y la carga en paralelo.
+- **Descarga:** en `update`, con sha256 fijado; nunca incluido en el binario.
+- **Latencia:** cargar el modelo en cada proceso (≈ 0.4–0.5 s) rompe el criterio de ~150 ms si se hace después de la pregunta. Se **precarga en un hilo mientras el usuario escribe** la pregunta (`ask --prompt`), y queda `search.embeddings = false` para apagarlo. Un daemon se deja para la fase 3, cuando haga falta por Laya.
+- Pendiente de 2.9b: velocidad de indexado en Rust por lotes, y coste de cargar/multiplicar los ~30k vectores desde SQLite (≈ 47 MB en f32; evaluar i8).
