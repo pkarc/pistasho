@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación) y 2.7 (alternativas sin instalar) y 2.8 (reglas de riesgo) y 2.9 (embeddings); 5.1 adelantada. Pendiente de la fase 2: 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
+**Fase 2 terminada; siguiente: fase 3 (opcional, solo si `eval` lo justifica) o la 4.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación) y 2.7 (alternativas sin instalar) y 2.8 (reglas de riesgo) y 2.9 (embeddings) y 2.10 (cierre; el GIF real con `vhs` pasó a la fase 5); 5.1 adelantada. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -45,7 +45,7 @@ src/
   search.rs        nucleo-matcher + bonus (herramienta exacta +80, mío +40, historial hasta +40); busca por prefijos (solo reevalúa lo que ya coincidía), en hilos, y solo en los primeros 150 caracteres de `alt`
   tui.rs           ratatui en /dev/tty (`Screen` prepara y devuelve la terminal; `confirm_install` es la caja amarilla): lista de candidatos con tres modos (`ListMode::Search` = las cuatro cajas de `pistasho search` y el popup; `Explore` y `Alternatives` = una sola caja con filtro `❯`, en línea, 11 filas) + relleno de marcadores (con `start_fill`, un viewport corto de 7 filas)
   shell.rs         código que imprime `init zsh` (el widget de `Ctrl-Space`) e `init tmux` (display-popup). Genera solo el widget de `Ctrl-Space` (`_pistasho_ask`); el de `Ctrl-G` ya no existe
-  eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml; `--mode fuzzy|bm25`, `--weights`
+  eval.rs          top-1 / top-3 por herramienta sobre eval/questions.toml; `--mode fuzzy|bm25|hybrid`, `--weights`
 eval/questions.toml   101 preguntas en español con sus herramientas correctas (40 originales + 61 genéricas); claves `question` / `tools`
 examples/cheats.toml
 ```

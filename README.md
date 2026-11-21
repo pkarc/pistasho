@@ -6,7 +6,7 @@
 
 Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phase 2 in progress**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Optionally a local multilingual embedding model (e5-small, ~135 MB) is fused with BM25 so that a question can match by meaning (`search.embeddings`, downloaded by `pistasho update`). Installing a missing tool and risk warnings are in place; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
+Status: **phase 2 done**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Optionally a local multilingual embedding model (e5-small, ~135 MB) is fused with BM25 so that a question can match by meaning (`search.embeddings`, downloaded by `pistasho update`). Installing a missing tool and risk warnings are in place; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
 
 ## Installation
 
@@ -85,7 +85,7 @@ History is read from `history_file` in the configuration, `$HISTFILE`, or the us
 
 - [x] **Phase 0** · project, CI, `init zsh`
 - [x] **Phase 1** · searcher: tldr (es + en), cheatsheet, history, placeholders, tmux popup, `eval`
-- [ ] **Phase 2** · question mode (`Ctrl-Space`) without AI: SQLite FTS5 (BM25) + multilingual embeddings, binary verification, OS detection, install with confirmation, risk rules
+- [x] **Phase 2** · question mode (`Ctrl-Space`) without AI: SQLite FTS5 (BM25) + multilingual embeddings, binary verification, OS detection, install with confirmation, risk rules
 - [ ] **Phase 3** · Laya (ONNX) as an optional decision layer, only if it improves the `eval` measurements
 - [ ] **Phase 4** · LLM fallback (Anthropic / Ollama) with cache; only sends the question + OS + shell
 - [ ] **Phase 5** · packaging (AUR), demos recorded with `vhs`

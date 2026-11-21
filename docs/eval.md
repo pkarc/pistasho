@@ -136,3 +136,24 @@ Implementado como estaba decidido en 2.9a: `ort` directo, vectores `i8` en SQLit
 - **Criterio de latencia (~150 ms): no se cumple en un `ask` suelto.** La mitigación es la precarga mientras el usuario escribe (`embed::prefetch`), que debería esconder la carga si la pregunta se escribe en más de ~0.5 s. Falta medirlo dentro del widget con preguntas cortas; si no basta, el siguiente paso es un daemon (fase 3) o apagarlo con `search.embeddings = false`.
 - Un hallazgo aparte: por significado, "montar una partición" devolvía `<n>` (la tecla de `fdisk` para crear una partición, que tldr lista como ejemplo). `ask` ya no sugiere comandos que empiezan por `<`.
 
+## Tarea 2.10 · Cierre de la fase 2 (2026-11-21)
+
+`pistasho eval` sobre las 101 preguntas, base recién construida (sin cheats ni historial):
+
+| Modo | top-1 | top-3 |
+|---|---|---|
+| fuzzy (línea base de la fase 1) | 28% | 41% |
+| bm25 | 35% | 50% |
+| **hybrid (lo que hace `ask`)** | **46%** | **61%** |
+
+(El top-3 del híbrido subió de 58% a 61% con el filtro de comandos que empiezan por `<`.) Sobre la fase 1 son +18 puntos de top-1 y +20 de top-3.
+
+**Latencia dentro del widget** (zsh real en tmux, modelo en disco, Enter tras escribir `comprimir una carpeta en zip`; el mensaje `⚡ … N ms` mide lo que tarda en resolver tras el Enter):
+
+| Tiempo entre `Ctrl-Space` y Enter | Resolver |
+|---|---|
+| ≥ 0.5 s (escribir normal) | **41 ms** (la precarga del modelo ya terminó) |
+| casi 0 (Enter inmediato) | 440–480 ms (hay que esperar la carga) |
+
+La mitigación por precarga funciona: el criterio de ~150 ms se cumple en el uso normal. Queda el peor caso, y la calidad absoluta sigue lejos del 85–90% de top-1 que justificaría descartar la fase 3 (criterio del CLAUDE.md).
+
