@@ -2,18 +2,28 @@
 //! BM25 over the SQLite full-text index (no model, no network).
 //!
 //! The pipeline: drop stop words from the question, search with stemmed prefix terms, weight the
-//! columns, boost your own commands and the ones you use often, and collapse duplicates.
+//! columns, boost your own commands and the ones you use often, and collapse duplicates. When the
+//! embedding model is available, a second ranking by meaning is fused with it (RRF).
 
 use crate::db::{self, Db, Weights, DEFAULT_WEIGHTS};
+use crate::embed;
 use crate::index::{Entry, Source};
 use crate::packages;
 use crate::placeholders;
+use crate::semantic;
 use crate::system;
 use anyhow::Result;
 use std::collections::HashSet;
 
 /// How many BM25 hits are fetched before re-ranking and de-duplicating.
 const POOL: usize = 60;
+/// Nearest vectors fetched before de-duplicating (translations share a shape, so many collapse).
+const VECTOR_POOL: usize = 200;
+/// RRF constant; the usual value, and the one the 2.9a experiment used.
+const RRF_K: f64 = 60.0;
+/// If this few entries lack a vector (your cheats after editing `cheats.toml`) they are
+/// embedded on the spot; more than that waits for `pistasho update`.
+const EMBED_ON_THE_FLY: usize = 200;
 
 /// Tunable knobs. The values come from `pistasho eval --mode bm25`, see docs/eval.md.
 pub struct Params {
@@ -81,6 +91,13 @@ pub fn terms(question: &str) -> Vec<String> {
         .collect()
 }
 
+/// tldr also lists keys typed inside an interactive program (`fdisk`'s `<n>`): they say what
+/// they do, and by meaning they are the best match for "create a partition", but they are not
+/// something to type at a prompt.
+fn runnable(e: &Entry) -> bool {
+    !e.cmd.trim_start().starts_with('<')
+}
+
 /// Your own commands and the ones you run often should win ties against tldr.
 fn boost(e: &Entry, p: &Params) -> f64 {
     match e.source {
@@ -92,14 +109,74 @@ fn boost(e: &Entry, p: &Params) -> f64 {
 
 /// The `limit` best candidates for a question, best first.
 pub fn ask(db: &Db, question: &str, limit: usize) -> Result<Vec<Candidate>> {
-    ask_with(db, question, limit, &PARAMS)
+    let qvec = embed::question_vector(question);
+    if qvec.is_some() {
+        embed_new_entries(db);
+    }
+    ask_with(db, question, limit, &PARAMS, qvec.as_deref())
 }
 
-pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Result<Vec<Candidate>> {
+/// Your cheats are not part of `update`: give the ones you just wrote a vector too.
+fn embed_new_entries(db: &Db) {
+    let Ok(missing) = db.missing_vectors() else { return };
+    if missing.is_empty() || missing.len() > EMBED_ON_THE_FLY {
+        return;
+    }
+    let texts: Vec<String> = missing.iter().map(|(_, p)| format!("passage: {p}")).collect();
+    let Some(Ok(vectors)) = embed::with_engine(|e| e.embed(&texts)) else {
+        return;
+    };
+    let rows: Vec<(i64, Vec<i8>)> = missing
+        .iter()
+        .zip(&vectors)
+        .map(|((key, _), v)| (*key, semantic::quantize(v)))
+        .collect();
+    let _ = db.put_vectors(&rows);
+}
+
+/// Entries closest in meaning to the question, as candidates (deduplicated by shape).
+fn by_meaning(db: &Db, qvec: &[f32]) -> Result<Vec<Candidate>> {
+    let index = db.vector_index()?;
+    if index.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<i64> = index
+        .top_k(qvec, VECTOR_POOL)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let mut seen = HashSet::new();
+    Ok(db
+        .entries_by_ids(&ids)?
+        .into_iter()
+        .filter(|e| runnable(e) && seen.insert(placeholders::shape(&e.cmd)))
+        .take(POOL)
+        .map(|entry| Candidate {
+            entry,
+            score: 0.0,
+            missing: Vec::new(),
+            renames: Vec::new(),
+        })
+        .collect())
+}
+
+fn identity(c: &Candidate) -> (&'static str, String) {
+    (c.entry.source.db_name(), c.entry.cmd.clone())
+}
+
+/// `qvec` is the question's embedding; without it (or without stored vectors) this is BM25 only.
+pub fn ask_with(
+    db: &Db,
+    question: &str,
+    limit: usize,
+    params: &Params,
+    qvec: Option<&[f32]>,
+) -> Result<Vec<Candidate>> {
     let words = terms(question);
     let mut ranked: Vec<Candidate> = db
         .fts_search_words(&words, POOL, params.weights)?
         .into_iter()
+        .filter(|(entry, _)| runnable(entry))
         .map(|(entry, score)| Candidate {
             score: score * boost(&entry, params),
             entry,
@@ -111,6 +188,12 @@ pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Resul
 
     let mut seen = HashSet::new();
     ranked.retain(|c| seen.insert(placeholders::shape(&c.entry.cmd)));
+    if let Some(qvec) = qvec {
+        // a question of only stop words finds nothing by BM25 and must stay that way
+        if !ranked.is_empty() || !words.is_empty() {
+            ranked = fuse(ranked, by_meaning(db, qvec)?);
+        }
+    }
     ranked.truncate(limit);
     // looked up after trimming: only the candidates that will be shown cost a PATH search
     for c in &mut ranked {
@@ -119,6 +202,28 @@ pub fn ask_with(db: &Db, question: &str, limit: usize, params: &Params) -> Resul
         c.renames = adapted.renames;
     }
     Ok(ranked)
+}
+
+/// BM25 (already boosted: your cheats and frequent history lead it) and meaning, fused by rank.
+fn fuse(bm25: Vec<Candidate>, meaning: Vec<Candidate>) -> Vec<Candidate> {
+    let rankings = [
+        bm25.iter().map(identity).collect::<Vec<_>>(),
+        meaning.iter().map(identity).collect::<Vec<_>>(),
+    ];
+    let mut by_key: std::collections::HashMap<_, Candidate> = std::collections::HashMap::new();
+    for c in bm25.into_iter().chain(meaning) {
+        by_key.entry(identity(&c)).or_insert(c);
+    }
+    let mut seen = HashSet::new();
+    semantic::rrf(&rankings, RRF_K)
+        .into_iter()
+        .filter_map(|(key, score)| {
+            let mut c = by_key.remove(&key)?;
+            c.score = score;
+            // the same example in two languages is one candidate
+            seen.insert(placeholders::shape(&c.entry.cmd)).then_some(c)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -156,6 +261,56 @@ mod tests {
         assert_eq!(terms("de la en"), Vec::<String>::new());
         // accents do not matter when comparing against the list
         assert_eq!(terms("más rápido"), vec!["rápido"]);
+    }
+
+    #[test]
+    fn keys_typed_inside_a_program_are_not_suggested() {
+        let db = db_with(
+            vec![
+                entry("fdisk", "<n>", "create a new partition", "", Source::Tldr, 0),
+                entry(
+                    "fdisk",
+                    "sudo fdisk {{/dev/sdX}}",
+                    "partition manipulator",
+                    "",
+                    Source::Tldr,
+                    0,
+                ),
+            ],
+            vec![],
+            vec![],
+        );
+        let top = ask(&db, "create a new partition", 5).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].entry.cmd, "sudo fdisk {{/dev/sdX}}");
+    }
+
+    fn cand(cmd: &str, source: Source) -> Candidate {
+        Candidate {
+            entry: entry("t", cmd, "", "", source, 0),
+            score: 0.0,
+            missing: Vec::new(),
+            renames: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn fusion_lifts_what_both_rankings_list_and_keeps_one_per_shape() {
+        let bm25 = vec![
+            cand("a {{x}}", Source::Tldr),
+            cand("b", Source::Tldr),
+            cand("c", Source::Cheat),
+        ];
+        let meaning = vec![
+            cand("b", Source::Tldr),
+            cand("a {{y}}", Source::Tldr),
+            cand("d", Source::Tldr),
+        ];
+        let fused = fuse(bm25, meaning);
+        let cmds: Vec<&str> = fused.iter().map(|c| c.entry.cmd.as_str()).collect();
+        // `a {{x}}` and `a {{y}}` have the same shape: the first one stands for both
+        assert_eq!(cmds, vec!["b", "a {{x}}", "c", "d"]);
+        assert!(fused.windows(2).all(|w| w[0].score >= w[1].score));
     }
 
     #[test]

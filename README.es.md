@@ -6,7 +6,7 @@
 
 Presionas `Ctrl-Space` en zsh, escribes lo que quieres con tus palabras (en español o en inglés) y el mejor comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo. Busca entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, y todo se queda en tu máquina.
 
-Estado: **fase 2 en curso**. Las preguntas se responden en local con BM25 sobre un índice de texto completo, y un segundo `Ctrl-Space` muestra alternativas cuando la respuesta no es la correcta. Después vienen los embeddings, instalar una herramienta que falta y los avisos de riesgo; Laya y el LLM de respaldo vienen más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
+Estado: **fase 2 en curso**. Las preguntas se responden en local con BM25 sobre un índice de texto completo, y un segundo `Ctrl-Space` muestra alternativas cuando la respuesta no es la correcta. Opcionalmente un modelo local de embeddings multilingüe (e5-small, ~135 MB) se fusiona con BM25 para que una pregunta coincida por significado (`search.embeddings`, lo descarga `pistasho update`). Instalar una herramienta que falta y los avisos de riesgo ya están; Laya y el LLM de respaldo vienen más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
 
 ## Instalación
 
@@ -53,13 +53,13 @@ Etiquetas de origen: `tldr` (páginas de tldr), `mío` (tu cheatsheet), `hist` (
 ```sh
 pistasho search [-q texto] [--send-to PANE] [--no-fill]   # interfaz; imprime el comando
 pistasho query texto de búsqueda [-n 10] [--timing]        # sin interfaz, para pruebas; --timing imprime tiempos
-pistasho update                                             # descarga tldr y reconstruye el índice
+pistasho update                                             # descarga tldr (y el modelo de embeddings) y reconstruye el índice
 pistasho add 'fuser -k {{puerto}}/tcp' -d 'Matar el proceso de un puerto' -t red
 pistasho doctor [programas…] [--table]                      # SO, gestor de paquetes y cómo conseguir un programa que falta
 pistasho init zsh | tmux
 pistasho config
 pistasho ask cómo comprimo una carpeta                     # mejor comando para una pregunta (--json -n 5: candidatos)
-pistasho eval eval/questions.toml [--mode fuzzy|bm25]       # mide la precisión del buscador
+pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] # mide la precisión del buscador
 ```
 
 ### Alto del buscador
@@ -76,6 +76,7 @@ La interfaz va en inglés por defecto. Pon `language = "es"` en `config.toml` (o
 |---|---|
 | `~/.config/pistasho/config.toml` | Configuración (ver `pistasho config`) |
 | `~/.config/pistasho/cheats.toml` | Tu cheatsheet ([ejemplo](examples/cheats.toml)) |
+| `~/.local/share/pistasho/models/` | El modelo de embeddings (`pistasho update`; se omite con `search.embeddings = false`). `PISTASHO_EMBEDDINGS=0` lo apaga en un comando |
 | `~/.local/share/pistasho/pistasho.db` | Base SQLite: el índice de tldr (`pistasho update`) más tus atajos e historial, que se resincronizan cuando sus archivos cambian |
 
 El historial se lee de `history_file` en la configuración, `$HISTFILE` o los sitios habituales (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **No sale de tu máquina.**

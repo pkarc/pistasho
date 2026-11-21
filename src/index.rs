@@ -3,6 +3,7 @@
 
 use crate::config::{self, Config};
 use crate::db::Db;
+use crate::embed;
 use crate::i18n::{lang, tr, Lang};
 use crate::{history, placeholders, tldr};
 use anyhow::{Context, Result};
@@ -97,6 +98,9 @@ pub fn update(cfg: &Config) -> Result<(usize, usize)> {
             ("tldr_updated", &updated),
         ],
     )?;
+    if cfg.search.embeddings {
+        embed_entries(&db)?;
+    }
     // the JSON index of earlier versions is no longer used
     if let Ok(dir) = config::data_dir() {
         let _ = std::fs::remove_file(dir.join("index.json"));
@@ -349,6 +353,27 @@ fn fingerprint(path: Option<&std::path::Path>) -> String {
 
 /// Brings the cheats and history rows up to date, but only when their files changed since the
 /// last sync (compared by fingerprint, stored in `meta`), so a normal open reads nothing.
+/// Downloads the embedding model if needed and gives every tldr and cheat entry a vector. What
+/// is already embedded is kept, so after the first run this only handles what changed.
+fn embed_entries(db: &Db) -> Result<()> {
+    embed::ensure_model()?;
+    let started = std::time::Instant::now();
+    let n = embed::index_missing(db, |done, total| {
+        let secs = started.elapsed().as_secs_f64();
+        let eta = secs / done as f64 * (total - done) as f64;
+        eprint!(
+            "\r{} {done}/{total} ({:.0} s {})   ",
+            tr("Embedding", "Calculando embeddings"),
+            eta,
+            tr("left", "restantes")
+        );
+    })?;
+    if n > 0 {
+        eprintln!("\r✓ {n} {}{}", tr("embeddings", "embeddings"), " ".repeat(30));
+    }
+    Ok(())
+}
+
 fn sync(db: &mut Db, cfg: &Config) -> Result<()> {
     let cheats_fp = fingerprint(Some(&config::cheats_path()?));
     if db.meta("cheats_fp")?.as_deref() != Some(cheats_fp.as_str()) {

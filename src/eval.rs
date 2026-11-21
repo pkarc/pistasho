@@ -1,10 +1,11 @@
 //! `pistasho eval`: measures how often the searcher puts the correct tool on top.
 //!
-//! Two rankers can be compared on the same questions: the fuzzy searcher of phase 1 and the
-//! BM25 search of `pistasho ask`.
+//! Three rankers can be compared on the same questions: the fuzzy searcher of phase 1, the BM25
+//! search, and BM25 fused with embeddings (what `pistasho ask` does when the model is there).
 
 use crate::ask::{self, Params};
 use crate::db::{Db, Weights};
+use crate::embed;
 use crate::i18n::tr;
 use crate::index::Entry;
 use crate::search::Searcher;
@@ -19,6 +20,8 @@ pub enum Mode {
     Fuzzy,
     /// BM25 over the full-text index (`pistasho ask`)
     Bm25,
+    /// BM25 fused with the embedding model by RRF (needs the model: `pistasho update`)
+    Hybrid,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +71,12 @@ pub fn evaluate(
 ) -> Result<Report> {
     let questions = read_questions(path)?;
     let mut fuzzy = (mode == Mode::Fuzzy).then(|| Searcher::new(entries));
+    if mode == Mode::Hybrid && !embed::enabled() {
+        anyhow::bail!(tr(
+            "hybrid mode needs the embedding model: set search.embeddings = true and run `pistasho update`",
+            "el modo hybrid necesita el modelo de embeddings: pon search.embeddings = true y corre `pistasho update`"
+        ));
+    }
     let mut params = Params { ..ask::PARAMS };
     if let Some(w) = weights {
         params.weights = w;
@@ -81,10 +90,15 @@ pub fn evaluate(
                 .into_iter()
                 .map(|i| entries[i].tool.clone())
                 .collect(),
-            None => ask::ask_with(db, &q.question, 3, &params)?
-                .into_iter()
-                .map(|c| c.entry.tool)
-                .collect(),
+            None => {
+                let qvec = (mode == Mode::Hybrid)
+                    .then(|| embed::question_vector(&q.question))
+                    .flatten();
+                ask::ask_with(db, &q.question, 3, &params, qvec.as_deref())?
+                    .into_iter()
+                    .map(|c| c.entry.tool)
+                    .collect()
+            }
         };
         let hit = |t: &String| q.tools.contains(t);
         if tools.first().is_some_and(hit) {

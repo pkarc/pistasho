@@ -6,13 +6,14 @@
 
 use crate::index::{Entry, Source};
 use crate::placeholders;
+use crate::semantic::{self, VectorIndex};
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::time::Duration;
 
 /// Bump when the tables change; a different version resets the database.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// `description` and `uses` instead of `desc` and `count` to stay clear of SQL keywords.
 /// The FTS table is "external content": it indexes `entries` without copying it, and the
@@ -31,9 +32,16 @@ CREATE TABLE IF NOT EXISTS entries (
     source      TEXT NOT NULL,
     origin      TEXT NOT NULL,
     uses        INTEGER NOT NULL DEFAULT 0,
-    cmd_words   TEXT NOT NULL DEFAULT ''
+    cmd_words   TEXT NOT NULL DEFAULT '',
+    vkey        INTEGER
 );
 CREATE INDEX IF NOT EXISTS entries_source ON entries(source);
+CREATE INDEX IF NOT EXISTS entries_vkey ON entries(vkey);
+-- embeddings, keyed by a hash of the entry's passage (see semantic.rs); i8, DIM bytes each
+CREATE TABLE IF NOT EXISTS vectors (
+    key INTEGER PRIMARY KEY,
+    v   BLOB NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     description, alt, tool, cmd_words,
     content = 'entries', content_rowid = 'id',
@@ -54,6 +62,7 @@ DROP TRIGGER IF EXISTS entries_ai;
 DROP TRIGGER IF EXISTS entries_ad;
 DROP TABLE IF EXISTS entries_fts;
 DROP TABLE IF EXISTS entries;
+DROP TABLE IF EXISTS vectors;
 DROP TABLE IF EXISTS meta;
 ";
 
@@ -128,8 +137,8 @@ impl Db {
         tx.execute("DELETE FROM entries WHERE source = ?1", [source.db_name()])?;
         {
             let mut insert = tx.prepare(
-                "INSERT INTO entries(cmd, description, alt, tool, source, origin, uses, cmd_words)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO entries(cmd, description, alt, tool, source, origin, uses, cmd_words, vkey)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
             for e in entries {
                 // history descriptions are generated labels ("used 3 times", in the UI
@@ -147,7 +156,12 @@ impl Db {
                     e.source.db_name(),
                     e.origin,
                     e.count,
-                    placeholders::plain_words(&e.cmd)
+                    placeholders::plain_words(&e.cmd),
+                    semantic::embeds(e).then(|| semantic::key(&semantic::passage_text(
+                        &e.tool,
+                        description,
+                        &e.alt
+                    )))
                 ])?;
             }
         }
@@ -178,6 +192,95 @@ impl Db {
         ))?;
         let rows = stmt.query_map([], row_to_entry)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Passages (and their keys) of the entries that have no vector yet, longest last so batches
+    /// of similar length waste little padding.
+    pub fn missing_vectors(&self) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT e.vkey, e.tool, e.description, e.alt FROM entries e
+             LEFT JOIN vectors v ON v.key = e.vkey
+             WHERE e.vkey IS NOT NULL AND v.key IS NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                semantic::passage_text(
+                    &r.get::<_, String>(1)?,
+                    &r.get::<_, String>(2)?,
+                    &r.get::<_, String>(3)?,
+                ),
+            ))
+        })?;
+        let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        out.sort_by_key(|(_, p)| p.len());
+        Ok(out)
+    }
+
+    pub fn put_vectors(&self, vectors: &[(i64, Vec<i8>)]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut insert = tx.prepare("INSERT OR REPLACE INTO vectors(key, v) VALUES (?1, ?2)")?;
+            for (key, v) in vectors {
+                let bytes: Vec<u8> = v.iter().map(|&b| b as u8).collect();
+                insert.execute(params![key, bytes])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Forgets the vectors no entry points to any more (the text changed or the page is gone).
+    pub fn prune_vectors(&self) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM vectors WHERE key NOT IN (SELECT vkey FROM entries WHERE vkey IS NOT NULL)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_vectors(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM vectors", [])?;
+        Ok(())
+    }
+
+    /// `(entries that should have a vector, entries that have one)`.
+    pub fn vector_coverage(&self) -> Result<(usize, usize)> {
+        let (all, have): (i64, i64) = self.conn.query_row(
+            "SELECT COUNT(e.vkey), COUNT(v.key) FROM entries e LEFT JOIN vectors v ON v.key = e.vkey",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((all as usize, have as usize))
+    }
+
+    /// Every vector, with the id of its entry (an entry that shares a passage shares a vector).
+    pub fn vector_index(&self) -> Result<VectorIndex> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT e.id, v.v FROM entries e JOIN vectors v ON v.key = e.vkey")?;
+        let mut rows = stmt.query([])?;
+        let mut index = VectorIndex::default();
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let blob = r.get_ref(1)?.as_blob()?;
+            index.push(id, blob);
+        }
+        Ok(index)
+    }
+
+    /// The entries with these ids, in the same order (ids that no longer exist are skipped).
+    pub fn entries_by_ids(&self, ids: &[i64]) -> Result<Vec<Entry>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT {COLUMNS} FROM entries e WHERE e.id = ?1"))?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(e) = stmt.query_row([id], row_to_entry).optional()? {
+                out.push(e);
+            }
+        }
+        Ok(out)
     }
 
     /// Full-text search of free text with the default weights; see [`Db::fts_search_words`].
@@ -507,5 +610,50 @@ mod tests {
             Some(SCHEMA_VERSION.to_string())
         );
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn vectors_follow_the_text_of_the_entry_not_its_row() {
+        let mut db = Db::open_in_memory().unwrap();
+        let tldr = tldr_sample();
+        db.replace_source(Source::Tldr, &tldr, &[]).unwrap();
+        db.replace_source(Source::Hist, &[entry("ls", "ls -la", "", "", Source::Hist)], &[])
+            .unwrap();
+        // history is not embedded; every tldr entry waits for a vector
+        let missing = db.missing_vectors().unwrap();
+        assert_eq!(missing.len(), tldr.len());
+        assert_eq!(db.vector_coverage().unwrap(), (tldr.len(), 0));
+
+        let rows: Vec<(i64, Vec<i8>)> = missing
+            .iter()
+            .map(|(k, _)| (*k, vec![1i8; semantic::DIM]))
+            .collect();
+        db.put_vectors(&rows).unwrap();
+        assert!(db.missing_vectors().unwrap().is_empty());
+        assert_eq!(db.vector_index().unwrap().ids.len(), tldr.len());
+
+        // `update` replaces the rows; unchanged text keeps its vector and needs no new embedding
+        db.replace_source(Source::Tldr, &tldr, &[]).unwrap();
+        assert!(db.missing_vectors().unwrap().is_empty());
+
+        // an edited description is a new passage; the old vector is pruned
+        let mut edited = tldr.clone();
+        edited[0].desc = "Something else entirely".into();
+        db.replace_source(Source::Tldr, &edited, &[]).unwrap();
+        assert_eq!(db.missing_vectors().unwrap().len(), 1);
+        db.prune_vectors().unwrap();
+        assert_eq!(db.vector_coverage().unwrap().1, tldr.len() - 1);
+    }
+
+    #[test]
+    fn entries_by_ids_keeps_the_order_asked_for() {
+        let mut db = Db::open_in_memory().unwrap();
+        let sample = tldr_sample();
+        db.replace_source(Source::Tldr, &sample, &[]).unwrap();
+        // rows of a fresh table are numbered from 1 in insertion order
+        let got = db.entries_by_ids(&[3, 1, 999]).unwrap();
+        assert_eq!(got.len(), 2, "a missing id is skipped");
+        assert_eq!(got[0].cmd, sample[2].cmd);
+        assert_eq!(got[1].cmd, sample[0].cmd);
     }
 }

@@ -3,6 +3,7 @@ mod ask;
 mod config;
 mod db;
 mod devices;
+mod embed;
 mod eval;
 mod history;
 mod i18n;
@@ -12,6 +13,7 @@ mod placeholders;
 mod prompt;
 mod risk;
 mod search;
+mod semantic;
 mod shell;
 mod system;
 mod tldr;
@@ -278,6 +280,7 @@ fn run() -> Result<ExitCode> {
         }
         Command::Eval { file, mode, weights } => {
             let cfg = Config::load()?;
+            embed::init(&cfg);
             let idx = Index::load(&cfg)?;
             let db = index::open_synced(&cfg)?;
             let weights = match weights {
@@ -304,6 +307,11 @@ fn run() -> Result<ExitCode> {
             format,
         } => {
             let cfg = Config::load()?;
+            embed::init(&cfg);
+            if !explore {
+                // loads while the user types the question and the database opens
+                embed::prefetch();
+            }
             if explore {
                 return match explore_list(&cfg)? {
                     None => Ok(ExitCode::from(130)),
@@ -798,6 +806,40 @@ fn install_json(bin: &str) -> Option<serde_json::Value> {
 }
 
 /// `pistasho doctor`: what this machine is and what it would take to get a program.
+/// Whether `ask` understands questions by meaning, and if not, why.
+fn embeddings_line() -> String {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.search.embeddings {
+        return tr(
+            "off (search.embeddings = false)",
+            "apagado (search.embeddings = false)",
+        )
+        .into();
+    }
+    if !embed::model_present() {
+        return tr(
+            "no model yet: run `pistasho update`",
+            "sin modelo todavía: corre `pistasho update`",
+        )
+        .into();
+    }
+    let coverage = config::db_path()
+        .ok()
+        .and_then(|p| db::Db::open(&p).ok())
+        .and_then(|db| db.vector_coverage().ok());
+    match coverage {
+        Some((all, have)) if have >= all && all > 0 => {
+            format!("{} ({have} {})", tr("on", "activo"), tr("vectors", "vectores"))
+        }
+        Some((all, have)) => format!(
+            "{} {have}/{all}: {}",
+            tr("incomplete,", "incompleto,"),
+            tr("run `pistasho update`", "corre `pistasho update`")
+        ),
+        None => tr("on", "activo").into(),
+    }
+}
+
 fn doctor(programs: &[String], table: bool) {
     let os = packages::detect_os();
     let manager = packages::Manager::detect();
@@ -812,6 +854,9 @@ fn doctor(programs: &[String], table: bool) {
         tr("Manager:", "Gestor:"),
         manager.map_or(tr("none known", "ninguno conocido"), |m| m.name())
     );
+    if !table {
+        println!("{:<9} {}", tr("Meaning:", "Significado:"), embeddings_line());
+    }
     if table {
         let Some(manager) = manager else { return };
         for command in packages::table_commands() {

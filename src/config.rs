@@ -26,6 +26,7 @@ pub struct Config {
     pub keys: Keys,
     pub ui: Ui,
     pub install: Install,
+    pub search: Search,
     /// Decision model (phase 3). Not used yet.
     pub decide: Decide,
     /// LLM fallback (phase 4). Not used yet.
@@ -65,6 +66,22 @@ pub struct Install {
     /// Offer to install it (with the exact command shown and an explicit key to confirm).
     /// There is no setting that installs without asking.
     pub offer: bool,
+}
+
+/// How `ask` ranks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Search {
+    /// Add multilingual embeddings to BM25 (`pistasho update` downloads a ~135 MB model and
+    /// embeds the entries). Without the model, or when false, `ask` is BM25 only.
+    /// `PISTASHO_EMBEDDINGS=0|1` overrides it for one command.
+    pub embeddings: bool,
+}
+
+impl Default for Search {
+    fn default() -> Self {
+        Self { embeddings: true }
+    }
 }
 
 impl Default for Install {
@@ -147,6 +164,7 @@ impl Default for Config {
             keys: Keys::default(),
             ui: Ui::default(),
             install: Install::default(),
+            search: Search::default(),
             decide: Decide::default(),
             llm: Llm::default(),
         }
@@ -411,6 +429,16 @@ pub fn wizard() -> Result<(Config, bool)> {
         if cfg.install.offer { yes } else { "n" },
     )?;
     cfg.install.offer = !offer.to_lowercase().starts_with('n');
+
+    let emb = ask(
+        &mut stdin,
+        tr(
+            "Understand questions by meaning with a local model? Downloads ~135 MB on update and uses ~600 MB of RAM for about a second per question (y/n)",
+            "¿Entender las preguntas por significado con un modelo local? Descarga ~135 MB en update y usa ~600 MB de RAM cerca de un segundo por pregunta (s/n)",
+        ),
+        if cfg.search.embeddings { yes } else { "n" },
+    )?;
+    cfg.search.embeddings = !emb.to_lowercase().starts_with('n');
 
     cfg.decide.provider = choose(
         &mut stdin,

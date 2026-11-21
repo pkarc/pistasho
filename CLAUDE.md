@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación) y 2.7 (alternativas sin instalar) y 2.8 (reglas de riesgo); 5.1 adelantada. Pendientes de la fase 2: 2.9 y 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
+**Fase 2 en curso.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación) y 2.7 (alternativas sin instalar) y 2.8 (reglas de riesgo) y 2.9 (embeddings); 5.1 adelantada. Pendiente de la fase 2: 2.10. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -33,6 +33,8 @@ src/
   system.rs        qué tiene la máquina: `which_in` (busca en PATH sin lanzar procesos), `binaries(cmd)` (los programas que ejecuta un comando: tokenizador con comillas, `$(...)`, tuberías, redirecciones, asignaciones, palabras clave y envoltorios `sudo`/`env`/`xargs`…), `missing_binaries`
   packages.rs      SO (`/etc/os-release`: `ID`, `ID_LIKE`) → gestor (apt, pacman, dnf, zypper); tabla curada `data/packages.toml` (comando → paquete por gestor, y programas que la distro instala con otro nombre); `exists` (pregunta al gestor); `adapt` (reescribe `fd` → `fdfind`); `plan_install` (el comando de instalación, sin ejecutarlo)
   alternatives.rs  `[a]`: tabla curada `data/alternatives.toml` (programa que falta → comando hecho con herramientas base, p. ej. `tree` → `find {{dir}} -maxdepth 2 | sort`); solo para comandos que ejecutan ese único programa y si lo que ejecuta la alternativa está instalado
+  embed.rs         el modelo `multilingual-e5-small` int8 en ONNX Runtime (`ort`): descarga en `update` con sha256 fijado a una revisión (`models/multilingual-e5-small/`), `Engine` (tokenizador y sesión se cargan en paralelo, sin optimización de grafo), estado global `init` / `prefetch` / `with_engine` / `question_vector`, `index_missing` (embebe lo que no tiene vector, por lotes de 32 ordenados por largo, guardando cada lote)
+  semantic.rs      la parte pura: texto que representa a una entrada (`herramienta. descripción. alt[:150]`), clave del vector (FNV-1a del texto), vectores `i8` (×127), `VectorIndex::top_k` por fuerza bruta, `rrf`
   risk.rs          reglas fijas de riesgo (`ok` / `caution` / `destructive`) sobre `system::commands` (programa, argumentos, redirecciones) y unos patrones de texto (bomba fork, SQL con un cliente SQL, `curl | sh`); `assess` devuelve nivel, hallazgos con su efecto y los dispositivos de bloque a los que escribe
   devices.rs       dispositivos de bloque: `is_block_device`, marcadores que son un dispositivo, `lsblk -J` (rm como bool o "0"/"1") y `removable` (solo extraíbles; los discos con particiones se listan por sus particiones)
   prompt.rs        la línea de pregunta de `Ctrl-Space`: toma la línea del prompt en /dev/tty (sin pantalla alternativa), editor simple (solo al final), spinner `resolving…` si tarda > 150 ms
@@ -49,6 +51,7 @@ examples/cheats.toml
 ```
 
 Detalles ya resueltos que conviene no romper:
+- Embeddings (2.9): `ask::ask` fusiona por RRF (k=60) el ranking de BM25 (ya con los boost de mío / historial) con el de significado (los 200 vectores más cercanos, deduplicados por forma). **Todo falla en suave**: sin modelo, sin vectores, con `search.embeddings = false` o `PISTASHO_EMBEDDINGS=0`, `ask` es BM25 puro. Los vectores se guardan por clave de texto (tabla `vectors`, `entries.vkey`), así que `update` solo embebe lo nuevo o editado (el primero tarda ~5 min y se puede interrumpir: reanuda). El historial no se embebe (no tiene descripción y es privado). Tus atajos nuevos se embeben al vuelo en `ask` si faltan ≤ 200. Cargar el modelo cuesta ~0.5 s: `main` llama `embed::prefetch()` al empezar `ask` para que cargue mientras el usuario escribe. Si cambias el modelo o cómo se arma el texto, sube `embed::MODEL_ID` (borra los vectores). `eval --mode hybrid` mide la fusión. `ask` ignora los comandos que empiezan por `<` (teclas dentro de `fdisk`, no comandos).
 - tldr se descarga de `https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip` (todos los idiomas). `page_path` acepta prefijos de carpeta.
 - Las traducciones se unen por comando normalizado: `desc` sale del primer idioma de `languages` y las demás descripciones más el resumen de la página van a `alt`, que se usa solo para buscar.
 - `placeholders::fill` deja `{{x}}` intacto cuando el valor es `None` o vacío.
@@ -126,6 +129,9 @@ platforms = ["common", "linux"]
 history = true
 history_limit = 5000
 tldr_url = "https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip"
+
+[search]
+embeddings = true            # sumar embeddings a BM25 (update baja ~135 MB); PISTASHO_EMBEDDINGS=0|1 lo anula
 
 [install]
 offer = true                  # la caja de instalar / alternativa; false la apaga. Nunca instala sin preguntar

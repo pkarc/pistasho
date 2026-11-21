@@ -119,3 +119,20 @@ Medido antes de construir nada, con `scripts/embeddings_experiment.py` (Python +
 - **Descarga:** en `update`, con sha256 fijado; nunca incluido en el binario.
 - **Latencia:** cargar el modelo en cada proceso (≈ 0.4–0.5 s) rompe el criterio de ~150 ms si se hace después de la pregunta. Se **precarga en un hilo mientras el usuario escribe** la pregunta (`ask --prompt`), y queda `search.embeddings = false` para apagarlo. Un daemon se deja para la fase 3, cuando haga falta por Laya.
 - Pendiente de 2.9b: velocidad de indexado en Rust por lotes, y coste de cargar/multiplicar los ~30k vectores desde SQLite (≈ 47 MB en f32; evaluar i8).
+
+## Tarea 2.9b · Embeddings en `ask` (2026-11-20)
+
+Implementado como estaba decidido en 2.9a: `ort` directo, vectores `i8` en SQLite (clave = hash del texto, así `update` solo embebe lo nuevo), RRF k=60 entre BM25 (con sus boost) y los 200 vectores más cercanos.
+
+| `pistasho eval` (101 preguntas, tldr sin cheats ni historial) | top-1 | top-3 |
+|---|---|---|
+| `--mode fuzzy` (fase 1) | 28% | 41% |
+| `--mode bm25` | 35% | 50% |
+| `--mode hybrid` | **46%** | **58%** |
+
+- El estudio en Python daba 50 / 58 en el híbrido. La diferencia de top-1 (4 preguntas) viene de la cuantización a i8, del tope de 128 tokens y de que aquel BM25 salía del `ask` instalado con cheats e historial reales; no se persiguió, porque el criterio ("`hybrid` supera a `bm25`") se cumple con holgura.
+- Subir el pool de vecinos de 200 a 400 no cambió nada.
+- **Costes medidos:** `update` completo ≈ 5 min 8 s (30 956 vectores, lotes de 32 ordenados por largo; 3 núcleos, 720 MB de RAM); la base queda en ≈ 29 MB (unos 12 MB son vectores); el binario release es de 32 MB; `ask` suelto ≈ 0.5 s y 475 MB de RAM (casi todo cargar el modelo). Con el modelo cargado, calcular la pregunta, leer los vectores y fusionar tarda ~30 ms (la evaluación de 101 preguntas, con carga única, tarda 3 s).
+- **Criterio de latencia (~150 ms): no se cumple en un `ask` suelto.** La mitigación es la precarga mientras el usuario escribe (`embed::prefetch`), que debería esconder la carga si la pregunta se escribe en más de ~0.5 s. Falta medirlo dentro del widget con preguntas cortas; si no basta, el siguiente paso es un daemon (fase 3) o apagarlo con `search.embeddings = false`.
+- Un hallazgo aparte: por significado, "montar una partición" devolvía `<n>` (la tecla de `fdisk` para crear una partición, que tldr lista como ejemplo). `ask` ya no sugiere comandos que empiezan por `<`.
+

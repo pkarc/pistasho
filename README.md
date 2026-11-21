@@ -6,7 +6,7 @@
 
 Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phase 2 in progress**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Embeddings, installing a missing tool and risk warnings come next; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
+Status: **phase 2 in progress**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Optionally a local multilingual embedding model (e5-small, ~135 MB) is fused with BM25 so that a question can match by meaning (`search.embeddings`, downloaded by `pistasho update`). Installing a missing tool and risk warnings are in place; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
 
 ## Installation
 
@@ -53,13 +53,13 @@ Source labels: `tldr` (tldr pages), `mine` (your cheatsheet), `hist` (your zsh h
 ```sh
 pistasho search [-q text] [--send-to PANE] [--no-fill]   # interface; prints the command
 pistasho query search text [-n 10] [--timing]            # no interface, for testing; --timing prints timings
-pistasho update                                           # downloads tldr and rebuilds the index
+pistasho update                                           # downloads tldr (and the embedding model) and rebuilds the index
 pistasho add 'fuser -k {{port}}/tcp' -d 'Kill the process on a port' -t net
 pistasho doctor [programs…] [--table]                     # OS, package manager, and how to get a missing program
 pistasho init zsh | tmux
 pistasho config
 pistasho ask how do I compress a folder                    # best command for a question (--json -n 5: candidates)
-pistasho eval eval/questions.toml [--mode fuzzy|bm25]     # measures searcher accuracy
+pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] # measures searcher accuracy
 ```
 
 ### Searcher height
@@ -76,6 +76,7 @@ The interface is in English by default. Set `language = "es"` in `config.toml` (
 |---|---|
 | `~/.config/pistasho/config.toml` | Configuration (see `pistasho config`) |
 | `~/.config/pistasho/cheats.toml` | Your cheatsheet ([example](examples/cheats.toml)) |
+| `~/.local/share/pistasho/models/` | The embedding model (`pistasho update`; skipped with `search.embeddings = false`). `PISTASHO_EMBEDDINGS=0` turns it off for one command |
 | `~/.local/share/pistasho/pistasho.db` | SQLite database: the tldr index (`pistasho update`) plus your cheats and history, re-synced when their files change |
 
 History is read from `history_file` in the configuration, `$HISTFILE`, or the usual places (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **It never leaves your machine.**
