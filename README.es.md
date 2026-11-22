@@ -88,7 +88,7 @@ El historial se lee de `history_file` en la configuración, `$HISTFILE` o los si
 - [x] **Fase 0** · proyecto, CI, `init zsh`
 - [x] **Fase 1** · buscador: tldr (es + en), cheatsheet, historial, marcadores, popup de tmux, `eval`
 - [x] **Fase 2** · modo pregunta (`Ctrl-Space`) sin IA: SQLite FTS5 (BM25) + embeddings multilingües, verificación de binarios, detección de OS, instalación con confirmación, reglas de riesgo
-- [ ] **Fase 3** · Laya (ONNX) como capa de decisión opcional, solo si mejora las mediciones de `eval`
+- ~~**Fase 3**~~ · Laya (ONNX) como capa de decisión opcional: **se decidió no construirla**; no mejoró las mediciones de `eval` y exigiría un modelo local y un daemon (ver `docs/eval.md`)
 - [x] **Fase 4** · LLM de respaldo (Anthropic) con caché; se pregunta solo cuando nada local es seguro; solo envía pregunta + OS + shell
 - [ ] **Fase 5** · empaquetado (AUR), demos grabadas con `vhs`
 

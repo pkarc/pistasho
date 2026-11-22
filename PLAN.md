@@ -147,7 +147,7 @@ El código nunca se compiló con sus dependencias.
 - Medido antes de construir nada (principio 7): recall@k de la recuperación y tres rerankers multilingües (`scripts/rerank_experiment.py`) sobre 101 + 287 preguntas (`eval/questions-synth.toml`, sintético, aparte del original). Ningún reranker sin ajustar mejora el orden actual y cuestan 190 ms – 2.2 s en CPU; Laya sin ajustar no se probó (su ficha da ≈0.35 de acierto). Detalle en `docs/eval.md`.
 - El cuello de botella era el recall, no el orden: se subió con pesos de fusión, un tldr por herramienta y sinónimos. **El usuario decidió usar solo la máquina local (nada de Proxmox / laya-serve).** La fase 3 queda condicionada a un reranker ajustado con datos propios (3.2 + 3.3) y a que supere al híbrido.
 
-### [ ] 3.1 Interfaz `Decide` + Jev / laya-serve por HTTP · M
+### [-] 3.1 Interfaz `Decide` + Jev / laya-serve por HTTP · M — **no se implementa (ver 3.6)**
 - Trait `Decide` con `choice(estado, opciones) -> (índice, prob)` y `noul(estado, pregunta) -> prob`.
 - Cliente HTTP para la API compatible con Jev, que sirve para Jev y para laya-serve; `decide.endpoint`, `decide.api_key_env`.
 - `ask` usa choice entre los 10 mejores candidatos + "ninguno".
@@ -155,26 +155,32 @@ El código nunca se compiló con sus dependencias.
 
 **Lista cuando:** funciona contra laya-serve (se descartó el Proxmox: solo máquina local) y está medido en `eval`.
 
-### [ ] 3.2 Datos de entrenamiento · M
+### [-] 3.2 Datos de entrenamiento · M — **no se implementa (ver 3.6)**
 - Ampliar el conjunto de prueba con pares sintéticos (pregunta, candidatos, correcto) generados desde tldr y revisados. Separar entrenamiento y prueba.
 
-### [ ] 3.3 Fine-tuning y calibración de Laya · L
+### [-] 3.3 Fine-tuning y calibración de Laya · L — **no se implementa (ver 3.6)**
 - Ajustar el checkpoint multilingüe y calibrar la temperatura. Exportar a ONNX int8.
 
 **Lista cuando:** supera al híbrido sin Laya por 5–10 puntos en el conjunto de prueba.
 
-### [ ] 3.4 Laya local con daemon · L
+### [-] 3.4 Laya local con daemon · L — **descartada (ver 3.6)**
 - `pistasho daemon`: socket unix en `$XDG_RUNTIME_DIR/pistasho.sock`, carga el modelo una vez, se levanta solo en la primera llamada y se apaga tras un tiempo sin uso.
 - `ort` en Rust, sin Python.
 
 **Lista cuando:** la primera llamada en frío tarda menos de 2 s y las siguientes menos de ~300 ms en CPU. Si no se logra, se queda solo la vía laya-serve.
 
-### [ ] 3.5 Riesgo y alternativas con noul · S
+### [-] 3.5 Riesgo y alternativas con noul · S — **no se implementa (ver 3.6)**
 - Combinar las reglas fijas de 2.8 con `noul("¿es destructivo?")`. Las reglas siempre ganan; el modelo solo agrega avisos.
 - `noul("¿la alternativa cumple la petición?")` para la opción `[a]`.
 
-### [ ] 3.6 Decisión · S
+### [x] 3.6 Decisión · S (2026-11-22)
 - Con los números en mano, decidir si Laya queda activado por defecto, opcional o se descarta. Anotarlo en `docs/eval.md`.
+- **Decisión: la fase 3 no se construye.** Razones, con sus datos en `docs/eval.md` (3.0 y 4.3):
+  1. *Laya local + daemon (3.3, 3.4) choca con la decisión del usuario del 2026-11-22* (la misma por la que se descartó Ollama): un modelo de 0.5–1.7 GB de RAM y un servicio residente solo por esta herramienta. Tampoco se usará Proxmox / laya-serve.
+  2. *Jev alojado (3.1, 3.5)* está en acceso anticipado con lista de espera, no hay clave, su documentación pública es de terceros, incompleta e inconsistente (dos hosts distintos) y la del fabricante no se pudo abrir: un cliente escrito hoy sería código sin poder verificarlo ni medirlo (principio 7).
+  3. *Los rerankers generales no ayudan* (3.0: ±1–3 puntos de top-1 a 190 ms – 2.2 s), y lo que se esperaba de la capa de decisión, decidir cuándo hace falta el LLM, ya lo hace el umbral del puntaje fusionado (4.3) con datos propios.
+  4. Un reranker ajustado con datos propios (3.2, 3.3) necesita muchos más datos de los que hay (388 preguntas, 287 sintéticas); eso queda ligado a la visión a largo plazo del programa de datos, que el usuario quiere conversar al final.
+- **Cuándo reabrirla:** si hay una clave de Jev (u otro servicio de decisión alojado) y se quiere medir `choice` sobre los 10 mejores con `eval`; o si aparece una vía local liviana (sin daemon, < ~100 MB, < ~100 ms) o suficientes datos reales. El gancho existe: `ask` ya tiene el puntaje fusionado y el LLM como segunda opinión.
 
 ---
 
@@ -273,3 +279,5 @@ El código nunca se compiló con sus dependencias.
 - 2026-11-21 · 4.1 hecha (sin llamadas reales al modelo: no había API key en el entorno de pruebas; **falta que el usuario lo pruebe con su key**). `src/llm.rs`: trait `Generate`, proveedor `Anthropic` (HTTP con `ureq`, sin SDK de Rust; `output_config.format` con JSON schema, `claude-haiku-4-5` por defecto), `llm::message` (`✦ llm · modelo · 1.1 s`). Se llama cuando la búsqueda local no encuentra nada (en `Ctrl-Space`, en el popup y en `ask`) y con `ask --llm`; el resultado pasa por `finalize`. Apagado por defecto y el asistente dice exactamente qué se envía. Cambios respecto al plan: (1) el id de modelo `claude-haiku-5-5` de CLAUDE.md y del asistente no existe: ahora `claude-haiku-4-5`; (2) la salida estructurada va por `output_config.format`, no por `tool_choice` forzado (los modelos nuevos lo rechazan con 400); (3) `ANTHROPIC_BASE_URL` permite un proxy y pruebas herméticas: caso `llm` de `scripts/e2e.py` con un servidor falso (200 y 401, y con el LLM apagado no se hace ninguna petición); (4) descubrimiento: `scripts/e2e.py` corría contra el binario instalado, no el compilado (ver CLAUDE.md). 165 tests. Pendiente de la fase: 4.2 Ollama, 4.3 cuándo llamar con coincidencias poco fiables, 4.4 validación completa y caché.
 - 2026-11-22 · 4.2 descartada por decisión del usuario: nada de modelos locales (Ollama) por el consumo de recursos; `llm.provider` queda en `none` o `anthropic`, y un proveedor desconocido (por ejemplo `ollama` de una config vieja) se avisa como `✗ llm: proveedor desconocido`. Los embeddings (e5-small con ONNX Runtime dentro de pistasho) no dependen de Ollama y se quedan.
 - 2026-11-22 · Fase 4 cerrada (4.1, 4.3, 4.4; 4.2 descartada). **4.3:** `llm.when = "unsure"` (por defecto) pregunta al LLM cuando nada local coincide o el mejor candidato tiene puntaje fusionado (RRF) menor que `llm.threshold` (0.20 por defecto); `"nomatch"` solo cuando nada coincide. Sin el modelo de embeddings el puntaje de BM25 no sirve como confianza, así que solo cuenta "nada coincide" (`Candidate.fused`). El umbral sale de `eval --confidence` (tabla en `docs/eval.md`): bajo 0.20 se pregunta en un 9–15% de las preguntas y el candidato local acierta solo 11–26% de las veces ahí (frente a 50–55% sobre el resto). **No se pudo medir cuánto acierta el LLM** sin gastar una clave: queda pendiente de que el usuario lo vea en uso. **4.4:** el comando del LLM pasa por `finalize` (binarios, caja roja) y por la oferta de instalación como cualquier otro (probado en e2e con instalación y caja roja, en `Ctrl-Space` y en el popup); caché en la tabla `llm_cache` (clave: pregunta normalizada sin mayúsculas, acentos ni signos) que sobrevive a `update` y a un cambio de esquema; una pregunta repetida sale como `⚡ local · cache` sin pedir nada; `pistasho cache list | clear [pregunta] | save <pregunta>` (esta última la deja en `cheats.toml` con la etiqueta `llm`). Si el LLM falla pero hay un candidato local, se muestra el local con la nota `✗ llm: …`. `doctor` muestra el estado del LLM sin enseñar la key. Revisión de huecos: (1) una pregunta cacheada se repite igual para siempre, la salida es `pistasho cache clear <pregunta>`; (2) el spinner del LLM no se puede cancelar con Esc (tope de 20 s); (3) el comando del LLM no aparece en la lista de alternativas, que son las locales; (4) la caché guarda las preguntas en la base local (nunca se envían a ningún lado). Todo probado con un servidor falso: ninguna prueba llamó al modelo.
+- 2026-11-22 · Fase 3 cerrada con la decisión de no construirla (3.6; 3.1–3.5 marcadas `[-]`). Razones y condiciones para reabrirla en la tarea 3.6 y en `docs/eval.md`. No se escribió ningún cliente de Jev: la API no se pudo verificar y no hay clave para medirlo.
+

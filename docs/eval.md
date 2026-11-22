@@ -206,3 +206,17 @@ El puntaje fusionado separa mal: aun lo "seguro" acierta solo 55–62%, porque m
 
 **Lo que no se midió:** cuánto acierta el LLM en ese grupo (cada medición gasta una clave de pago; las pruebas usan un servidor falso). Queda para ver en uso real, con `pistasho cache list` para revisar lo que respondió.
 
+## Tarea 3.6 · Decisión sobre la fase 3 (2026-11-22)
+
+La capa de decisión (Laya / Jev) no se construye. Resumen de lo medido y averiguado:
+
+| Qué | Dato |
+|---|---|
+| Rerankers generales sobre los 20 mejores (3.0) | −3 a +3 puntos de top-1, 190 ms – 2.2 s en CPU: no compensan |
+| Techo de la recuperación (recall@10) | 85% / 84% (originales / sintéticas): hay de dónde reordenar, pero no con modelos sin ajustar |
+| Cuándo llamar al LLM (4.3) | El puntaje fusionado aísla un grupo (9–15% de las preguntas) donde el candidato local acierta solo 11–26%: ya cubre "¿hace falta el LLM?" |
+| Laya sin ajustar | ≈0.35 de acierto en su propia ficha (azar 0.32); ajustarlo pide datos que no hay y un daemon de 0.5–1.7 GB |
+| Jev alojado | Acceso anticipado con lista de espera; documentación pública de terceros, incompleta y con hosts distintos; sin clave no se puede medir |
+
+Y la decisión del usuario de no depender de modelos locales pesados descarta Laya local, el daemon y el servidor en el Proxmox. Queda abierta una puerta barata: si hay clave de Jev, medir `choice` sobre los 10 mejores con `eval`.
+

@@ -88,7 +88,7 @@ History is read from `history_file` in the configuration, `$HISTFILE`, or the us
 - [x] **Phase 0** · project, CI, `init zsh`
 - [x] **Phase 1** · searcher: tldr (es + en), cheatsheet, history, placeholders, tmux popup, `eval`
 - [x] **Phase 2** · question mode (`Ctrl-Space`) without AI: SQLite FTS5 (BM25) + multilingual embeddings, binary verification, OS detection, install with confirmation, risk rules
-- [ ] **Phase 3** · Laya (ONNX) as an optional decision layer, only if it improves the `eval` measurements
+- ~~**Phase 3**~~ · Laya (ONNX) as an optional decision layer: **decided not to build**; it did not improve the `eval` measurements and would need a local model and daemon (see `docs/eval.md`)
 - [x] **Phase 4** · LLM fallback (Anthropic) with cache; asked only when nothing local is sure; only sends the question + OS + shell
 - [ ] **Phase 5** · packaging (AUR), demos recorded with `vhs`
 

@@ -108,13 +108,9 @@ El detalle por tareas está en `PLAN.md`. Resumen:
 - **Reglas fijas de riesgo:** `rm -rf`, `dd of=/dev/`, `mkfs`, `chmod -R`/`chown -R` sobre `/`, `> /dev/sd*`, fork bombs, `:(){`. Aviso rojo y nunca auto-relleno silencioso.
 - Medir con `pistasho eval` contra la línea base de la fase 1 y guardar los números en el README o en un `docs/eval.md`.
 
-### Fase 3: modelo de decisión (opcional, solo si `eval` lo justifica)
-- Interfaz `Decide` con tres implementaciones: Laya local (ONNX), laya-serve (HTTP compatible con Jev) y Jev (API de TypeSafe).
-- Usos: **choice** entre los ~10 mejores candidatos + "ninguno" (decide si hace falta el LLM), **noul** "¿es destructivo?" y **noul** "¿la alternativa cumple la petición?".
-- Datos investigados (noviembre de 2026): Jev es **no generativo** (choice / score / noul con probabilidades), alojado, a $0.042 por millón de tokens de entrada. Laya es abierto (Apache 2.0), el checkpoint multilingüe es mmBERT-base de 322M parámetros, y el inglés es ModernBERT-large de 421M. **Los "33 ms" son en GPU T4; en CPU son unos 370–380 ms el modelo grande** (el multilingüe ~2× más rápido), con 0.5 GB de RAM en int8 y 1.7 GB en fp32. **Sin fine-tuning su precisión es baja** (0.36 en una prueba independiente) y viene sin calibrar. Es una base para especializar, no algo listo para usar.
-- Por eso necesita un **daemon** (`pistasho daemon`, socket unix en `$XDG_RUNTIME_DIR`) que mantenga el modelo en memoria, y **fine-tuning + calibración** con nuestro conjunto de prueba ampliado.
-- Criterio para descartarlo: si la búsqueda híbrida ya acierta el top-1 en un 85–90% de los casos, si Laya ajustado no mejora 5–10 puntos, o si tarda más de ~300 ms en la máquina del usuario.
-- El usuario decidió (2026-11-21) usar solo la máquina local: nada de Proxmox ni laya-serve. Los rerankers sin ajustar probados en 3.0 no mejoran el orden actual (`docs/eval.md`).
+### Fase 3: modelo de decisión (decisión tomada: no se construye)
+- Estaba pensada como interfaz `Decide` (Laya local en ONNX, laya-serve, Jev) con `choice` sobre los ~10 mejores candidatos + "ninguno", y `noul` para riesgo y alternativas. **No se construyó** (PLAN.md 3.6, datos en `docs/eval.md`): Laya local y su daemon chocan con la decisión del usuario de no pedir recursos locales solo por esta herramienta (tampoco Proxmox ni laya-serve); Jev alojado está en acceso anticipado sin clave y con documentación inconsistente; los rerankers generales no mejoran el orden; y decidir cuándo llamar al LLM ya lo cubre el umbral de 4.3.
+- Se reabre si hay una clave de Jev y se quiere medir `choice` con `eval`, si aparece una vía local liviana (sin daemon), o con suficientes datos reales del programa de datos (ver más abajo).
 
 ### Visión a largo plazo (solo anotada)
 - El usuario propone un programa opt-in de compartir datos de uso para entrenar y corregir un modelo (detalle y preguntas abiertas en `PLAN.md`, sección "Visión a largo plazo"). **No construir nada de esto ni enviar datos antes de que el usuario lo converse al terminar las demás fases.** Choca con el principio 3 tal como está escrito.
