@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["cli", "shell", "zsh", "tldr", "tmux"]
 categories = ["command-line-utilities"]
 # what a user needs to build it; the agent notes, plan, study scripts and GIFs stay in the repo
-exclude = [".github/", "scripts/", "packaging/", "CLAUDE.md", "PLAN.md", "docs/*.gif", "docs/demo/"]
+exclude = [".github/", "scripts/", "packaging/", "CLAUDE.md", "PLAN.md", "docs/*.gif", "docs/demo/", "training/"]
 
 [dependencies]
 anyhow = "1"

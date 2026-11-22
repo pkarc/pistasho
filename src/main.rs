@@ -139,6 +139,11 @@ enum Command {
         /// Print the ranked candidates as JSON, with their scores, instead of just the best one
         #[arg(long)]
         json: bool,
+        /// Read one question per line from stdin and print one JSON line each (the candidates only):
+        /// the index and the model load once, so thousands of questions take minutes (used to
+        /// build training data, see training/)
+        #[arg(long)]
+        batch: bool,
         /// How many candidates to include with --json
         #[arg(short = 'n', long, default_value_t = 10)]
         limit: usize,
@@ -395,6 +400,7 @@ fn run() -> Result<ExitCode> {
         Command::Ask {
             question,
             llm,
+            batch,
             json,
             limit,
             prompt,
@@ -428,6 +434,9 @@ fn run() -> Result<ExitCode> {
             }
             if prompt {
                 return ask_on_prompt(&cfg, &initial, format, send_to.as_deref());
+            }
+            if batch {
+                return ask_batch(&cfg, limit);
             }
             let question = question.join(" ");
             if llm {
@@ -550,6 +559,34 @@ fn emit(
 }
 
 /// Nothing matched: the output is the message, and the exit code is 1.
+/// `pistasho ask --batch`: a question per line in, a JSON line of candidates per question out.
+fn ask_batch(cfg: &Config, limit: usize) -> Result<ExitCode> {
+    use std::io::{BufRead, Write};
+    let db = index::open_synced(cfg)?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in std::io::stdin().lock().lines() {
+        let question = line?;
+        let candidates = if question.trim().is_empty() {
+            Vec::new()
+        } else {
+            ask::ask(&db, &question, limit)?
+        };
+        let json = serde_json::json!({
+            "question": question,
+            "candidates": candidates.iter().map(|c| serde_json::json!({
+                "command": c.entry.cmd,
+                "description": c.entry.desc,
+                "tool": c.entry.tool,
+                "source": c.entry.source.db_name(),
+                "score": c.score,
+            })).collect::<Vec<_>>(),
+        });
+        writeln!(out, "{json}")?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `pistasho ask` without the interface: the LLM's command on stdout, how it was made on stderr.
 fn ask_llm_plain(cfg: &Config, question: &str, local: Option<&str>) -> Result<ExitCode> {
     let db = index::open_synced(cfg)?;

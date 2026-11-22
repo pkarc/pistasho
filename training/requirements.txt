@@ -1,0 +1,6 @@
+# torch is installed separately (see run.sh setup): CUDA 12.8 build for an RTX 5090, CPU build elsewhere.
+laya==0.5.2
+numpy
+onnx
+onnxruntime
+onnxscript
