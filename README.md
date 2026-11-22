@@ -6,14 +6,16 @@
 
 Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phase 2 done**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Optionally a local multilingual embedding model (e5-small, ~135 MB) is fused with BM25 so that a question can match by meaning (`search.embeddings`, downloaded by `pistasho update`). Installing a missing tool and risk warnings are in place; An optional LLM fallback (Anthropic, off by default: set `llm.provider = "anthropic"` and an API key variable) answers when nothing local matches; it sends only your question, the OS name, the package manager and the shell name, never history, files or paths, and its command goes through the same checks and is never run. Laya comes later. See [Roadmap](#roadmap).
+Status: **phases 0–4 done, phase 5 (packaging and polish) in progress**; nothing is released yet. Questions are answered locally with BM25 plus an optional multilingual embedding model, a second `Ctrl-Space` shows alternatives, a missing tool can be installed after an explicit confirmation, risky commands get a warning, and an optional LLM fallback answers what the local index cannot. See [Privacy](#privacy) and the [Roadmap](#roadmap).
 
 ## Installation
 
 ```sh
-cargo install --path .
+cargo install --path .   # from a clone of this repository
 pistasho config          # wizard: languages, keys, models; downloads tldr at the end
 ```
+
+Packaged installs (GitHub release binaries for x86_64 and aarch64, `cargo install pistasho`, an AUR package) are prepared but not published yet; see [docs/release.md](docs/release.md). The first `pistasho update` downloads tldr and the embedding model (~135 MB) and computes the vectors (about 5 minutes, and it can be interrupted and resumed). With `search.embeddings = false` it skips the model and `ask` uses BM25 only.
 
 In `~/.zshrc`:
 
@@ -83,6 +85,24 @@ The interface is in English by default. Set `language = "es"` in `config.toml` (
 
 History is read from `history_file` in the configuration, `$HISTFILE`, or the usual places (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **It never leaves your machine.**
 
+## LLM fallback (optional)
+
+Off by default (`llm.provider = "none"`): nothing leaves your machine. To turn it on, run `pistasho config` and pick `anthropic`, and put your API key in the environment variable it names (`ANTHROPIC_API_KEY` by default; pistasho never stores the key). Then, when nothing local matches or the best match is shaky (best score under `llm.threshold`, 0.20 by default; `llm.when = "nomatch"` asks only when nothing matches), the question goes to the model and its command lands on the prompt like any other: it is checked for missing programs and risk, and **it never runs by itself**. Answers are cached (`pistasho cache list | clear | save`), so asking the same thing again costs nothing, and a failed call falls back to the local answer. `pistasho doctor` shows whether it is ready.
+
+## Privacy
+
+- **Your history, files and paths never leave your machine.** Searching, the embeddings and the risk rules all run locally.
+- The only network use is `pistasho update` (tldr from GitHub, and the embedding model from Hugging Face, checked against a pinned SHA-256), and the optional LLM fallback.
+- The LLM fallback, if you turn it on, sends **only** the question you typed, the OS name, the package manager and the shell name to the provider. Your questions can still contain things you would rather not share, so read them before asking.
+- The cache of the LLM's answers and your questions live in the local database (`~/.local/share/pistasho/pistasho.db`).
+- The only thing pistasho runs by itself is a package installation, and only after you press `y` with the exact command shown (official package managers only, never `curl | sh`).
+
+## Contributing
+
+- **Cheats and tldr:** your own commands go in `~/.config/pistasho/cheats.toml` (`pistasho add`). For commands everybody could use, send them to [tldr-pages](https://github.com/tldr-pages/tldr): pistasho reads those pages, in English and Spanish.
+- **Questions for `eval`:** `pistasho eval` measures how often the right tool comes out on top. Add real questions (the ones that failed for you) to [`eval/questions.toml`](eval/questions.toml) as `question = "..."` plus the `tools` that count as correct, and run `pistasho eval --mode hybrid`. `eval/questions-synth.toml` holds generated questions and is kept apart on purpose.
+- Before sending a change: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`, and `PISTASHO_BIN=$PWD/target/release/pistasho python3 scripts/e2e.py` if you touched the widget, `tui.rs` or `main.rs`. The design notes and the plan are in Spanish ([CLAUDE.md](CLAUDE.md), [PLAN.md](PLAN.md), `docs/adr/`).
+
 ## Roadmap
 
 - [x] **Phase 0** · project, CI, `init zsh`
@@ -90,7 +110,7 @@ History is read from `history_file` in the configuration, `$HISTFILE`, or the us
 - [x] **Phase 2** · question mode (`Ctrl-Space`) without AI: SQLite FTS5 (BM25) + multilingual embeddings, binary verification, OS detection, install with confirmation, risk rules
 - ~~**Phase 3**~~ · Laya (ONNX) as an optional decision layer: **decided not to build**; it did not improve the `eval` measurements and would need a local model and daemon (see `docs/eval.md`)
 - [x] **Phase 4** · LLM fallback (Anthropic) with cache; asked only when nothing local is sure; only sends the question + OS + shell
-- [ ] **Phase 5** · packaging (AUR), demos recorded with `vhs`
+- [ ] **Phase 5** · packaging (release workflow, AUR and crates.io files prepared, not published), real demos with `vhs` (scripts in `docs/demo/`, not recorded yet), documentation, changelog
 
 The detailed task list lives in [PLAN.md](PLAN.md) (written in Spanish, like the design decisions in `docs/adr/`).
 

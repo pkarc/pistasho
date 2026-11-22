@@ -6,14 +6,16 @@
 
 Presionas `Ctrl-Space` en zsh, escribes lo que quieres con tus palabras (en español o en inglés) y el mejor comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo. Busca entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, y todo se queda en tu máquina.
 
-Estado: **fase 2 terminada**. Las preguntas se responden en local con BM25 sobre un índice de texto completo, y un segundo `Ctrl-Space` muestra alternativas cuando la respuesta no es la correcta. Opcionalmente un modelo local de embeddings multilingüe (e5-small, ~135 MB) se fusiona con BM25 para que una pregunta coincida por significado (`search.embeddings`, lo descarga `pistasho update`). Instalar una herramienta que falta y los avisos de riesgo ya están; Un LLM de respaldo opcional (Anthropic, apagado por defecto: pon `llm.provider = "anthropic"` y una variable con la API key) responde cuando nada local coincide; solo envía tu pregunta, el nombre del SO, el gestor de paquetes y el shell, nunca historial, archivos ni rutas, y su comando pasa por las mismas comprobaciones y nunca se ejecuta. Laya viene más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
+Estado: **fases 0–4 terminadas, fase 5 (empaquetado y pulido) en curso**; todavía no hay ninguna versión publicada. Las preguntas se responden en local con BM25 más un modelo opcional de embeddings multilingüe, un segundo `Ctrl-Space` muestra alternativas, una herramienta que falta se puede instalar tras una confirmación explícita, los comandos peligrosos llevan aviso, y un LLM de respaldo opcional responde lo que el índice local no puede. Ver [Privacidad](#privacidad) y la [Hoja de ruta](#hoja-de-ruta).
 
 ## Instalación
 
 ```sh
-cargo install --path .
+cargo install --path .   # desde un clon de este repositorio
 pistasho config          # asistente: idiomas, atajos, modelos; descarga tldr al final
 ```
+
+Las instalaciones empaquetadas (binarios de los releases de GitHub para x86_64 y aarch64, `cargo install pistasho` y un paquete de AUR) están preparadas pero todavía no se publican; ver [docs/release.md](docs/release.md). El primer `pistasho update` descarga tldr y el modelo de embeddings (~135 MB) y calcula los vectores (unos 5 minutos; se puede interrumpir y reanuda). Con `search.embeddings = false` se salta el modelo y `ask` usa solo BM25.
 
 En `~/.zshrc`:
 
@@ -83,6 +85,24 @@ La interfaz va en inglés por defecto. Pon `language = "es"` en `config.toml` (o
 
 El historial se lee de `history_file` en la configuración, `$HISTFILE` o los sitios habituales (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **No sale de tu máquina.**
 
+## LLM de respaldo (opcional)
+
+Apagado por defecto (`llm.provider = "none"`): nada sale de tu máquina. Para encenderlo, corre `pistasho config`, elige `anthropic` y pon tu API key en la variable de entorno que indica (`ANTHROPIC_API_KEY` por defecto; pistasho nunca guarda la key). Entonces, cuando nada local coincide o la mejor coincidencia es dudosa (mejor puntaje menor que `llm.threshold`, 0.20 por defecto; con `llm.when = "nomatch"` solo cuando nada coincide), la pregunta va al modelo y su comando llega al prompt como cualquier otro: se revisa si faltan programas y el riesgo, y **nunca se ejecuta solo**. Las respuestas se guardan en caché (`pistasho cache list | clear | save`), así que repetir la misma pregunta no cuesta nada, y si la llamada falla se muestra la respuesta local. `pistasho doctor` muestra si está listo.
+
+## Privacidad
+
+- **Tu historial, tus archivos y tus rutas nunca salen de tu máquina.** La búsqueda, los embeddings y las reglas de riesgo corren en local.
+- El único uso de red es `pistasho update` (tldr desde GitHub y el modelo de embeddings desde Hugging Face, comprobado contra un SHA-256 fijo) y el LLM de respaldo opcional.
+- El LLM de respaldo, si lo enciendes, envía **solo** la pregunta que escribiste, el nombre del SO, el gestor de paquetes y el nombre del shell al proveedor. Tus preguntas podrían contener cosas que prefieras no compartir: léelas antes de preguntar.
+- La caché de las respuestas del LLM y tus preguntas viven en la base local (`~/.local/share/pistasho/pistasho.db`).
+- Lo único que pistasho ejecuta por su cuenta es la instalación de un paquete, y solo después de que pulses `y` con el comando exacto a la vista (solo gestores oficiales, nunca `curl | sh`).
+
+## Cómo contribuir
+
+- **Atajos y tldr:** tus comandos propios van en `~/.config/pistasho/cheats.toml` (`pistasho add`). Para comandos que sirven a todos, envíalos a [tldr-pages](https://github.com/tldr-pages/tldr): pistasho lee esas páginas, en inglés y en español.
+- **Preguntas para `eval`:** `pistasho eval` mide cuántas veces sale primero la herramienta correcta. Agrega preguntas reales (las que te fallaron) a [`eval/questions.toml`](eval/questions.toml) como `question = "..."` más las `tools` que cuentan como correctas, y corre `pistasho eval --mode hybrid`. `eval/questions-synth.toml` tiene preguntas generadas y se mantiene aparte a propósito.
+- Antes de enviar un cambio: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`, y `PISTASHO_BIN=$PWD/target/release/pistasho python3 scripts/e2e.py` si tocaste el widget, `tui.rs` o `main.rs`. Las notas de diseño y el plan están en español ([CLAUDE.md](CLAUDE.md), [PLAN.md](PLAN.md), `docs/adr/`).
+
 ## Hoja de ruta
 
 - [x] **Fase 0** · proyecto, CI, `init zsh`
@@ -90,7 +110,7 @@ El historial se lee de `history_file` en la configuración, `$HISTFILE` o los si
 - [x] **Fase 2** · modo pregunta (`Ctrl-Space`) sin IA: SQLite FTS5 (BM25) + embeddings multilingües, verificación de binarios, detección de OS, instalación con confirmación, reglas de riesgo
 - ~~**Fase 3**~~ · Laya (ONNX) como capa de decisión opcional: **se decidió no construirla**; no mejoró las mediciones de `eval` y exigiría un modelo local y un daemon (ver `docs/eval.md`)
 - [x] **Fase 4** · LLM de respaldo (Anthropic) con caché; se pregunta solo cuando nada local es seguro; solo envía pregunta + OS + shell
-- [ ] **Fase 5** · empaquetado (AUR), demos grabadas con `vhs`
+- [ ] **Fase 5** · empaquetado (workflow de releases, archivos de AUR y crates.io preparados, sin publicar), demos reales con `vhs` (guiones en `docs/demo/`, sin grabar), documentación, changelog
 
 La lista detallada de tareas está en [PLAN.md](PLAN.md) (en español, igual que las decisiones de diseño en `docs/adr/`).
 

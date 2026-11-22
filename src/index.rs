@@ -99,7 +99,19 @@ pub fn update(cfg: &Config) -> Result<(usize, usize)> {
         ],
     )?;
     if cfg.search.embeddings {
-        embed_entries(&db)?;
+        // tldr is already stored: a model that cannot be downloaded (or an interrupted embedding
+        // run) must not make the whole update look failed. `ask` is BM25 only until it is done,
+        // and running `update` again resumes where it stopped.
+        if let Err(e) = embed_entries(&db) {
+            eprintln!(
+                "\n⚠ {} ({e}). {}",
+                tr("embeddings not finished", "embeddings sin terminar"),
+                tr(
+                    "Search works without them; run `pistasho update` again to finish.",
+                    "La búsqueda funciona sin ellos; corre `pistasho update` otra vez para terminar."
+                )
+            );
+        }
     }
     // the JSON index of earlier versions is no longer used
     if let Ok(dir) = config::data_dir() {

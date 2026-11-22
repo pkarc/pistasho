@@ -17,7 +17,7 @@ Herramienta en Rust para preguntar en lenguaje natural con `Ctrl-Space` (zsh, o 
 
 ## Estado actual
 
-**Fase 2 terminada; siguiente: fase 3 (opcional, solo si `eval` lo justifica) o la 4.** Hechas: 1.1, 1.3, 1.4; 2.1 (SQLite + FTS5), 2.2 (`ask` con BM25), 2.3a (`Ctrl-Space`), 2.3b (alternativas con un segundo `Ctrl-Space`), 2.3c (explorar con `Tab`) y 2.3d (popup de tmux en modo pregunta), 2.4 (verificación de binarios) y 2.5 (SO y paquetes) y 2.6 (instalar con confirmación) y 2.7 (alternativas sin instalar) y 2.8 (reglas de riesgo) y 2.9 (embeddings) y 2.10 (cierre; el GIF real con `vhs` pasó a la fase 5); 5.1 adelantada. Falta confirmar a mano la 1.2 dentro de una sesión ssh. Línea base y mediciones en `docs/eval.md`.
+**Fases 0–2 y 4 hechas; la 3 se decidió no construirla (PLAN.md 3.6); la 5 está hecha hasta donde se puede sin publicar** (empaquetado preparado y sin publicar, guiones de `vhs` escritos y sin grabar, README y CHANGELOG al día). Lo pendiente depende del usuario: etiquetar y publicar una versión (`docs/release.md`), grabar los GIFs (instalar `vhs` y `ttyd`), probar el LLM de respaldo con su key y ver cuánto acierta, confirmar a mano la 1.2 dentro de una sesión ssh, y **conversar al final la idea del programa de compartir datos** (sección "Visión a largo plazo"). Línea base y todas las mediciones en `docs/eval.md`.
 
 La lista detallada de tareas, con tamaños y criterios de "lista cuando", está en `PLAN.md`. Marca las tareas con `[x]` y anota los cambios de plan en su sección de Notas.
 
@@ -51,6 +51,9 @@ src/
 eval/questions-synth.toml   287 preguntas generadas (no escritas por el usuario) para medir el recall y, más adelante, entrenar; se mide aparte del original
 eval/questions.toml   101 preguntas en español con sus herramientas correctas (40 originales + 61 genéricas); claves `question` / `tools`
 examples/cheats.toml
+packaging/aur/PKGBUILD   paquete de AUR (sin probar ni publicar); .github/workflows/release.yml: binarios en un release al empujar una etiqueta `v*` (sin probar)
+docs/release.md   pasos para publicar (en español); docs/demo/: guiones de `vhs` y su entorno limpio (sin grabar)
+CHANGELOG.md / CHANGELOG.es.md
 ```
 
 Detalles ya resueltos que conviene no romper:
