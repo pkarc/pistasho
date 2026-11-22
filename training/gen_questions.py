@@ -177,8 +177,8 @@ def main():
         except (ValueError, KeyError, TypeError, RuntimeError) as e:
             with LOCK:
                 stats["failed" if isinstance(e, RuntimeError) else "bad_json"] += 1
-                if isinstance(e, RuntimeError):
-                    print(f"  ! {e}", file=sys.stderr)
+                # the message only: it never contains the request or the key
+                print(f"  ! {type(e).__name__}: {str(e)[:160]}", file=sys.stderr)
             return
         lines = []
         for it in items:

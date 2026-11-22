@@ -172,6 +172,21 @@ python3 training/quality_report.py training/out/gen/gemma.jsonl training/out/gen
 
 (Comprobar el identificador exacto del modelo y el campo para apagar el "thinking" en la página del servicio.)
 
+## Cómo escribe la gente en una línea de comandos (corrección del usuario, 2026-11-22)
+
+Al revisar a ciegas las preguntas generadas, el usuario confirmó que el **contenido** suena humano, pero el
+**formato** no: nadie escribe así en una terminal. Una persona escribe **todo en minúsculas, sin tildes**
+(la tilde pide una tecla muerta antes de la vocal; la ñ tiene tecla propia y se queda), **sin `¿` ni `¡`**,
+sin signos de exclamación y **sin punto final**; las comas sí se usan y un `?` al final aparece a veces, como en
+inglés. Lo mismo en inglés: sin mayúscula inicial. Es la escritura informal óptima para un usuario común.
+
+Consecuencia: un modelo entrenado con la ortografía formal se prueba con preguntas que no se le parecen (los
+embeddings y Laya ven tokens distintos con y sin tilde). `training/style.py` aplica esa regla de forma
+determinista y se usa con probabilidad (`make_data.py --casual`, 0.8 por defecto: algunas personas sí
+escriben bien, y los bancos de `eval` escritos a mano en su mayoría llevan tildes). También hay una versión
+informal de los bancos (`make_eval_cache.py --casual`) para medir las dos formas. Se aplica a **todas** las
+preguntas, las generadas y las derivadas de tldr, antes de recuperar los candidatos.
+
 ## Puerta de decisión
 
 Con la tabla de `summary.py`, la variante elegida debe cumplir:

@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 from common import FORMATS, MAX_OPTIONS, ROOT, build_row, local_candidates_batch
+from style import casual
 import os
 
 ES_WORDS = {"el", "la", "los", "las", "de", "del", "un", "una", "para", "con", "en", "y", "se", "que", "por", "al", "su", "sus", "los"}
@@ -164,6 +165,7 @@ def main():
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--generated", nargs="*", default=[], help="JSONL from gen_questions.py: human-sounding questions per example")
     ap.add_argument("--generated-only", action="store_true", help="use only the generated questions, not the ones derived from the descriptions")
+    ap.add_argument("--casual", type=float, default=0.8, help="share of the questions written the way people type (lowercase, no accents, no ¿ ¡ or final stop); see style.py")
     ap.add_argument("--mix", type=float, default=0.25, help="share of entries that also get a code-switched question (0 = none)")
     args = ap.parse_args()
 
@@ -187,7 +189,7 @@ def main():
         derived = [] if args.generated_only else variants(e["desc"], e["alt"], rng, args.mix, vocab)
         for text, lang in derived + generated.get((e["tool"], e["cmd"]), []):
             if len(text.split()) >= 2:
-                work.append((e, text, lang))
+                work.append((e, casual(text, rng, args.casual), lang))
     print(f"{len(entries)} entries -> {len(work)} questions", file=sys.stderr)
     cache = retrieve([w[1] for w in work], out / "candidates.jsonl", args.workers)
 
