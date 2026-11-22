@@ -135,10 +135,15 @@ impl Height {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Decide {
-    /// `none`, `laya`, `laya-serve` o `jev`.
+    /// `none` or `jev` (TypeSafe's hosted decision model). Only hosted: a local model would cost
+    /// the user more resources than this tool is worth.
     pub provider: String,
+    /// Base URL, for a proxy; `TYPESAFE_BASE_URL` overrides it.
     pub endpoint: Option<String>,
     pub api_key_env: Option<String>,
+    /// Also ask it whether a command is destructive, next to the fixed rules (it can only add a
+    /// warning).
+    pub risk: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +196,7 @@ impl Default for Decide {
             provider: "none".into(),
             endpoint: None,
             api_key_env: None,
+            risk: true,
         }
     }
 }
@@ -449,54 +455,38 @@ pub fn wizard() -> Result<(Config, bool)> {
     cfg.decide.provider = choose(
         &mut stdin,
         tr(
-            "Decision model (chooses among local candidates; phase 3):",
-            "Modelo de decisión (elige entre candidatos locales; fase 3):",
+            "Decision model: re-orders the local candidates and says when none fits. It sends your question and the text of public tldr candidates (never your cheats, history, values or paths):",
+            "Modelo de decisión: reordena los candidatos locales y avisa cuando ninguno sirve. Envía tu pregunta y el texto de candidatos públicos de tldr (nunca tus atajos, historial, valores ni rutas):",
         ),
         &[
             ("none", tr("local search only", "solo búsqueda local")),
-            (
-                "laya",
-                tr(
-                    "local Laya on ONNX (~0.5–1.7 GB of RAM)",
-                    "Laya local en ONNX (~0.5–1.7 GB de RAM)",
-                ),
-            ),
-            (
-                "laya-serve",
-                tr(
-                    "laya-serve server on your network",
-                    "servidor laya-serve en tu red",
-                ),
-            ),
-            ("jev", tr("Jev API (TypeSafe)", "API de Jev (TypeSafe)")),
+            ("jev", tr("Jev, hosted by TypeSafe (needs an API key)", "Jev, alojado por TypeSafe (necesita API key)")),
         ],
         &cfg.decide.provider.clone(),
     )?;
-    match cfg.decide.provider.as_str() {
-        "laya-serve" => {
-            let d = cfg
-                .decide
-                .endpoint
-                .clone()
-                .unwrap_or_else(|| "http://localhost:8000".into());
-            cfg.decide.endpoint = opt(ask(&mut stdin, tr("laya-serve URL", "URL de laya-serve"), &d)?);
-        }
-        "jev" => {
-            let d = cfg
-                .decide
-                .api_key_env
-                .clone()
-                .unwrap_or_else(|| "JEV_API_KEY".into());
-            cfg.decide.api_key_env = opt(ask(
-                &mut stdin,
-                tr(
-                    "Environment variable holding the API key",
-                    "Variable de entorno con la API key",
-                ),
-                &d,
-            )?);
-        }
-        _ => {}
+    if cfg.decide.provider == "jev" {
+        let d = cfg
+            .decide
+            .api_key_env
+            .clone()
+            .unwrap_or_else(|| crate::decide::DEFAULT_KEY_ENV.into());
+        cfg.decide.api_key_env = opt(ask(
+            &mut stdin,
+            tr(
+                "Environment variable holding the API key",
+                "Variable de entorno con la API key",
+            ),
+            &d,
+        )?);
+        let risk = ask(
+            &mut stdin,
+            tr(
+                "Also ask it whether a command is destructive, next to the fixed rules? It sends the command template, not your values (y/n)",
+                "¿Preguntarle también si un comando es destructivo, junto a las reglas fijas? Envía la plantilla del comando, no tus valores (s/n)",
+            ),
+            if cfg.decide.risk { yes } else { "n" },
+        )?;
+        cfg.decide.risk = !risk.to_lowercase().starts_with('n');
     }
 
     cfg.llm.provider = choose(

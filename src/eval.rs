@@ -90,7 +90,14 @@ pub struct Tuning {
 }
 
 /// Runs every question through the chosen ranker.
-pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tuning) -> Result<Report> {
+pub fn evaluate(
+    path: &Path,
+    mode: Mode,
+    entries: &[Entry],
+    db: &Db,
+    tuning: Tuning,
+    decide: Option<&crate::decide::Jev>,
+) -> Result<Report> {
     let questions = read_questions(path)?;
     let mut fuzzy = (mode == Mode::Fuzzy).then(|| Searcher::new(entries));
     if mode == Mode::Hybrid && !embed::enabled() {
@@ -127,7 +134,19 @@ pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tun
                 let qvec = (mode == Mode::Hybrid)
                     .then(|| embed::question_vector(&q.question))
                     .flatten();
-                let found = ask::ask_with(db, &q.question, 10, &params, qvec.as_deref())?;
+                // the decision model is shown more candidates than the 10 that are scored
+                let shown = if decide.is_some() {
+                    crate::decide::MAX_OPTIONS.max(10)
+                } else {
+                    10
+                };
+                let mut found = ask::ask_with(db, &q.question, shown, &params, qvec.as_deref())?;
+                if let Some(jev) = decide {
+                    // a failed call keeps the local order, like the real thing
+                    if let Ok((reordered, _)) = crate::decide::apply(jev, &q.question, found.clone()) {
+                        found = reordered;
+                    }
+                }
                 best_score = found.first().map_or(0.0, |c| c.score);
                 found.into_iter().map(|c| c.entry.tool).collect()
             }
@@ -144,7 +163,7 @@ pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tun
             let shown: Vec<_> = tools.iter().take(3).cloned().collect();
             misses.push((q.question.clone(), shown.join(", ")));
         }
-        if tools.iter().any(hit) {
+        if tools.iter().take(10).any(hit) {
             recall10 += 1;
         }
     }
@@ -194,8 +213,9 @@ pub fn run(
     db: &Db,
     tuning: Tuning,
     show_confidence: bool,
+    decide: Option<&crate::decide::Jev>,
 ) -> Result<()> {
-    let report = evaluate(path, mode, entries, db, tuning)?;
+    let report = evaluate(path, mode, entries, db, tuning, decide)?;
     println!("{} {}", tr("questions:", "preguntas:"), report.questions);
     println!("top-1:     {:.0}%", report.top1_pct());
     println!("top-3:     {:.0}%", report.top3_pct());

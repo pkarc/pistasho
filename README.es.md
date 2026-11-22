@@ -6,7 +6,7 @@
 
 Presionas `Ctrl-Space` en zsh, escribes lo que quieres con tus palabras (en español o en inglés) y el mejor comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo. Busca entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, y todo se queda en tu máquina.
 
-Estado: **fases 0–4 terminadas, fase 5 (empaquetado y pulido) en curso**; todavía no hay ninguna versión publicada. Las preguntas se responden en local con BM25 más un modelo opcional de embeddings multilingüe, un segundo `Ctrl-Space` muestra alternativas, una herramienta que falta se puede instalar tras una confirmación explícita, los comandos peligrosos llevan aviso, y un LLM de respaldo opcional responde lo que el índice local no puede. Ver [Privacidad](#privacidad) y la [Hoja de ruta](#hoja-de-ruta).
+Estado: **fases 0–4 terminadas, fase 5 (empaquetado y pulido) en curso**; todavía no hay ninguna versión publicada. Las preguntas se responden en local con BM25 más un modelo opcional de embeddings multilingüe, un segundo `Ctrl-Space` muestra alternativas, una herramienta que falta se puede instalar tras una confirmación explícita, los comandos peligrosos llevan aviso, un modelo de decisión alojado opcional reordena los candidatos (top-1 de ~50% a 76–83% en las preguntas de `eval`), y un LLM de respaldo opcional responde lo que el índice local no puede. Ver [Privacidad](#privacidad) y la [Hoja de ruta](#hoja-de-ruta).
 
 ## Instalación
 
@@ -63,7 +63,8 @@ pistasho config
 pistasho ask cómo comprimo una carpeta                     # mejor comando para una pregunta (--json -n 5: candidatos)
 pistasho ask --llm renombrar todos los jpeg a jpg           # pregunta directo al LLM (necesita `[llm]`)
 pistasho cache list | clear [pregunta] | save <pregunta>   # respuestas del LLM en caché; guarda una como atajo propio
-pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] [--confidence] # mide la precisión del buscador
+pistasho risk rm -rf ./build                               # qué dicen las reglas de riesgo de un comando (JSON; no se ejecuta nada)
+pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] [--confidence] [--decide] # mide la precisión del buscador
 ```
 
 ### Alto del buscador
@@ -85,6 +86,15 @@ La interfaz va en inglés por defecto. Pon `language = "es"` en `config.toml` (o
 
 El historial se lee de `history_file` en la configuración, `$HISTFILE` o los sitios habituales (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **No sale de tu máquina.**
 
+## Modelo de decisión (opcional)
+
+Apagado por defecto (`decide.provider = "none"`). Con `decide.provider = "jev"` (elígelo en `pistasho config`) y una clave de [TypeSafe](https://typesafe.ai) en `TYPESAFE_API_KEY`, un modelo alojado que responde con una probabilidad en vez de texto hace dos cosas, ambas medidas antes de construirlas (`docs/eval.md`):
+
+- **Elige entre los mejores candidatos locales.** Reordena los veinte mejores candidatos de tldr y avisa cuando ninguno sirve (que es lo que dispara el LLM de respaldo). En las preguntas de `eval` el top-1 pasó de 52% a 83% (101 preguntas reales) y de 48% a 76% (287 generadas), a unos 200 ms por pregunta.
+- **Da una segunda opinión de riesgo** (`decide.risk`, activa por defecto al encender el modelo): una plantilla de comando que considera destructiva abre la caja roja aunque las reglas fijas la dejen pasar. Solo puede añadir un aviso, nunca quitarlo; cazó 21 de 29 comandos destructivos junto a los 17 de las reglas, sin ninguna falsa alarma en los 63 comandos probados (y un simple `rm {{archivo}}` no abre la caja roja).
+
+Solo se le envían tu pregunta y el texto de candidatos públicos de tldr (o una plantilla de comando con sus `{{marcadores}}` todavía puestos). Nunca tus atajos, historial, los valores que rellenaste, archivos ni rutas: si la mejor respuesta local es tuya, no se envía nada y conserva el primer lugar. Si el servicio falla, se queda el orden local y la línea bajo el prompt dice por qué.
+
 ## LLM de respaldo (opcional)
 
 Apagado por defecto (`llm.provider = "none"`): nada sale de tu máquina. Para encenderlo, corre `pistasho config`, elige `anthropic` y pon tu API key en la variable de entorno que indica (`ANTHROPIC_API_KEY` por defecto; pistasho nunca guarda la key). Entonces, cuando nada local coincide o la mejor coincidencia es dudosa (mejor puntaje menor que `llm.threshold`, 0.20 por defecto; con `llm.when = "nomatch"` solo cuando nada coincide), la pregunta va al modelo y su comando llega al prompt como cualquier otro: se revisa si faltan programas y el riesgo, y **nunca se ejecuta solo**. Las respuestas se guardan en caché (`pistasho cache list | clear | save`), así que repetir la misma pregunta no cuesta nada, y si la llamada falla se muestra la respuesta local. `pistasho doctor` muestra si está listo.
@@ -93,6 +103,7 @@ Apagado por defecto (`llm.provider = "none"`): nada sale de tu máquina. Para en
 
 - **Tu historial, tus archivos y tus rutas nunca salen de tu máquina.** La búsqueda, los embeddings y las reglas de riesgo corren en local.
 - El único uso de red es `pistasho update` (tldr desde GitHub y el modelo de embeddings desde Hugging Face, comprobado contra un SHA-256 fijo) y el LLM de respaldo opcional.
+- El modelo de decisión, si lo enciendes, envía **solo** tu pregunta y el texto de candidatos públicos de tldr (o una plantilla de comando), nunca tus comandos propios, historial ni los valores que rellenaste.
 - El LLM de respaldo, si lo enciendes, envía **solo** la pregunta que escribiste, el nombre del SO, el gestor de paquetes y el nombre del shell al proveedor. Tus preguntas podrían contener cosas que prefieras no compartir: léelas antes de preguntar.
 - La caché de las respuestas del LLM y tus preguntas viven en la base local (`~/.local/share/pistasho/pistasho.db`).
 - Lo único que pistasho ejecuta por su cuenta es la instalación de un paquete, y solo después de que pulses `y` con el comando exacto a la vista (solo gestores oficiales, nunca `curl | sh`).
@@ -108,7 +119,7 @@ Apagado por defecto (`llm.provider = "none"`): nada sale de tu máquina. Para en
 - [x] **Fase 0** · proyecto, CI, `init zsh`
 - [x] **Fase 1** · buscador: tldr (es + en), cheatsheet, historial, marcadores, popup de tmux, `eval`
 - [x] **Fase 2** · modo pregunta (`Ctrl-Space`) sin IA: SQLite FTS5 (BM25) + embeddings multilingües, verificación de binarios, detección de OS, instalación con confirmación, reglas de riesgo
-- ~~**Fase 3**~~ · Laya (ONNX) como capa de decisión opcional: **se decidió no construirla**; no mejoró las mediciones de `eval` y exigiría un modelo local y un daemon (ver `docs/eval.md`)
+- [x] **Fase 3** · capa de decisión: Jev (alojado, opcional) reordena los candidatos y suma una opinión de riesgo; Laya (ONNX local, daemon) quedó fuera porque exige recursos locales (ver `docs/eval.md`)
 - [x] **Fase 4** · LLM de respaldo (Anthropic) con caché; se pregunta solo cuando nada local es seguro; solo envía pregunta + OS + shell
 - [ ] **Fase 5** · empaquetado (workflow de releases, archivos de AUR y crates.io preparados, sin publicar), demos reales con `vhs` (guiones en `docs/demo/`, sin grabar), documentación, changelog
 

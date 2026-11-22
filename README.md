@@ -6,7 +6,7 @@
 
 Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phases 0–4 done, phase 5 (packaging and polish) in progress**; nothing is released yet. Questions are answered locally with BM25 plus an optional multilingual embedding model, a second `Ctrl-Space` shows alternatives, a missing tool can be installed after an explicit confirmation, risky commands get a warning, and an optional LLM fallback answers what the local index cannot. See [Privacy](#privacy) and the [Roadmap](#roadmap).
+Status: **phases 0–4 done, phase 5 (packaging and polish) in progress**; nothing is released yet. Questions are answered locally with BM25 plus an optional multilingual embedding model, a second `Ctrl-Space` shows alternatives, a missing tool can be installed after an explicit confirmation, risky commands get a warning, an optional hosted decision model re-orders the candidates (top-1 from about 50% to 76–83% on the eval questions), and an optional LLM fallback answers what the local index cannot. See [Privacy](#privacy) and the [Roadmap](#roadmap).
 
 ## Installation
 
@@ -63,7 +63,8 @@ pistasho config
 pistasho ask how do I compress a folder                    # best command for a question (--json -n 5: candidates)
 pistasho ask --llm rename all jpeg to jpg                   # ask the LLM directly (needs `[llm]`)
 pistasho cache list | clear [question] | save <question>   # the LLM's cached answers; save one as your own cheat
-pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] [--confidence] # measures searcher accuracy
+pistasho risk rm -rf ./build                               # what the fixed risk rules say about a command (JSON; nothing is run)
+pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] [--confidence] [--decide] # measures searcher accuracy
 ```
 
 ### Searcher height
@@ -85,6 +86,15 @@ The interface is in English by default. Set `language = "es"` in `config.toml` (
 
 History is read from `history_file` in the configuration, `$HISTFILE`, or the usual places (`~/.zsh_history`, `~/.histfile`, `~/.local/share/zsh/history`). **It never leaves your machine.**
 
+## Decision model (optional)
+
+Off by default (`decide.provider = "none"`). With `decide.provider = "jev"` (pick it in `pistasho config`) and a [TypeSafe](https://typesafe.ai) key in `TYPESAFE_API_KEY`, a hosted model that answers with a probability instead of text does two things, both measured before they were built (`docs/eval.md`):
+
+- **Chooses among the best local candidates.** It re-orders the twenty best tldr candidates and says when none of them fits (which is what triggers the LLM fallback). On the eval questions top-1 went from 52% to 83% (101 real questions) and from 48% to 76% (287 generated ones), at about 200 ms per question.
+- **Gives a second opinion on risk** (`decide.risk`, on by default once the model is on): a command template it finds destructive opens the red box even if the fixed rules let it pass. It can only add a warning, never remove one; it caught 21 of 29 destructive commands next to the rules' 17, with no false alarm on the 63 commands tried (and a plain `rm {{file}}` does not get the red box).
+
+It is sent **only** your question and the text of public tldr candidates (or a command template with its `{{placeholders}}` still in it). Never your cheats, history, the values you filled in, files or paths: if the best local answer is one of yours, nothing is sent and it keeps the first place. If the service fails, the local order stays and the line under the prompt says why.
+
 ## LLM fallback (optional)
 
 Off by default (`llm.provider = "none"`): nothing leaves your machine. To turn it on, run `pistasho config` and pick `anthropic`, and put your API key in the environment variable it names (`ANTHROPIC_API_KEY` by default; pistasho never stores the key). Then, when nothing local matches or the best match is shaky (best score under `llm.threshold`, 0.20 by default; `llm.when = "nomatch"` asks only when nothing matches), the question goes to the model and its command lands on the prompt like any other: it is checked for missing programs and risk, and **it never runs by itself**. Answers are cached (`pistasho cache list | clear | save`), so asking the same thing again costs nothing, and a failed call falls back to the local answer. `pistasho doctor` shows whether it is ready.
@@ -93,6 +103,7 @@ Off by default (`llm.provider = "none"`): nothing leaves your machine. To turn i
 
 - **Your history, files and paths never leave your machine.** Searching, the embeddings and the risk rules all run locally.
 - The only network use is `pistasho update` (tldr from GitHub, and the embedding model from Hugging Face, checked against a pinned SHA-256), and the optional LLM fallback.
+- The decision model, if you turn it on, sends **only** your question and the text of public tldr candidates (or a command template), never your own commands, history or the values you filled in.
 - The LLM fallback, if you turn it on, sends **only** the question you typed, the OS name, the package manager and the shell name to the provider. Your questions can still contain things you would rather not share, so read them before asking.
 - The cache of the LLM's answers and your questions live in the local database (`~/.local/share/pistasho/pistasho.db`).
 - The only thing pistasho runs by itself is a package installation, and only after you press `y` with the exact command shown (official package managers only, never `curl | sh`).
@@ -108,7 +119,7 @@ Off by default (`llm.provider = "none"`): nothing leaves your machine. To turn i
 - [x] **Phase 0** · project, CI, `init zsh`
 - [x] **Phase 1** · searcher: tldr (es + en), cheatsheet, history, placeholders, tmux popup, `eval`
 - [x] **Phase 2** · question mode (`Ctrl-Space`) without AI: SQLite FTS5 (BM25) + multilingual embeddings, binary verification, OS detection, install with confirmation, risk rules
-- ~~**Phase 3**~~ · Laya (ONNX) as an optional decision layer: **decided not to build**; it did not improve the `eval` measurements and would need a local model and daemon (see `docs/eval.md`)
+- [x] **Phase 3** · decision layer: Jev (hosted, optional) re-orders the candidates and adds a risk opinion; Laya (local ONNX, daemon) was left out because it needs local resources (see `docs/eval.md`)
 - [x] **Phase 4** · LLM fallback (Anthropic) with cache; asked only when nothing local is sure; only sends the question + OS + shell
 - [ ] **Phase 5** · packaging (release workflow, AUR and crates.io files prepared, not published), real demos with `vhs` (scripts in `docs/demo/`, not recorded yet), documentation, changelog
 

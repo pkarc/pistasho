@@ -58,6 +58,37 @@ pub struct Assessment {
     pub devices: Vec<String>,
 }
 
+/// Adds what a decision model thinks (the probability that the command is destructive) to the
+/// fixed rules' verdict. It can only raise the level: at 0.65 or more a command the rules let pass
+/// is shown in the red box, at 0.3 or more it gets a caution. The cut-offs come from
+/// `scripts/jev_experiment.py risk` and a check on real tldr templates (docs/eval.md): harmless
+/// templates scored under 0.21, a plain `rm {{file}}` 0.55 (so it must not get the red box) and
+/// `dd`, `mkfs` and `DROP TABLE` 0.70–0.93. Small samples: the margins are not wide.
+pub fn with_model(mut assessment: Assessment, destructive: f64) -> Assessment {
+    if destructive >= crate::decide::NOUL_DESTRUCTIVE && assessment.level != Level::Destructive {
+        assessment.findings.push(Finding {
+            level: Level::Destructive,
+            rule: "model",
+            effect: tr(
+                "a decision model flags it as destructive",
+                "un modelo de decisión lo marca como destructivo",
+            ),
+        });
+        assessment.level = Level::Destructive;
+    } else if destructive >= crate::decide::NOUL_RISKY && assessment.level == Level::Ok {
+        assessment.findings.push(Finding {
+            level: Level::Caution,
+            rule: "model",
+            effect: tr(
+                "a decision model flags it as risky",
+                "un modelo de decisión lo marca como riesgoso",
+            ),
+        });
+        assessment.level = Level::Caution;
+    }
+    assessment
+}
+
 impl Assessment {
     /// The sentences of the findings at the worst level, joined.
     pub fn effect(&self) -> String {
@@ -840,6 +871,32 @@ mod tests {
         assert_eq!(Caution.name(), "caution");
         assert_eq!(Ok.name(), "ok");
         assert!(Ok < Caution && Caution < Destructive);
+    }
+
+    #[test]
+    fn a_decision_model_can_raise_the_level_but_never_lower_it() {
+        let ok = assess("echo hola");
+        assert_eq!(
+            with_model(ok.clone(), 0.2).level,
+            Ok,
+            "a low probability changes nothing"
+        );
+        assert_eq!(with_model(ok.clone(), 0.35).level, Caution);
+        let high = with_model(ok, 0.9);
+        assert_eq!(high.level, Destructive);
+        assert!(high.findings.iter().any(|f| f.rule == "model"));
+        // the rules said destructive: a model that disagrees does not soften it
+        let rules = assess("mkfs.ext4 /dev/sdb1");
+        assert_eq!(rules.level, Destructive);
+        assert_eq!(with_model(rules, 0.0).level, Destructive);
+        // caution plus a middling probability stays caution; a high one escalates
+        let caution = assess("rm -rf ./build");
+        assert_eq!(
+            with_model(caution.clone(), 0.55).level,
+            Caution,
+            "a plain rm is 0.55: no red box"
+        );
+        assert_eq!(with_model(caution, 0.7).level, Destructive);
     }
 
     #[test]

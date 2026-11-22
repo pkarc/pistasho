@@ -2,6 +2,7 @@ mod alternatives;
 mod ask;
 mod config;
 mod db;
+mod decide;
 mod devices;
 mod embed;
 mod eval;
@@ -114,6 +115,15 @@ enum Command {
         /// Also print how often the best candidate is right by score (to choose `llm.threshold`)
         #[arg(long)]
         confidence: bool,
+        /// Let the decision model (`decide.provider = "jev"`) re-order the candidates: sends the eval
+        /// questions and tldr candidates to the provider
+        #[arg(long)]
+        decide: bool,
+    },
+    /// What the fixed risk rules say about a command, as JSON (nothing is run)
+    Risk {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
     },
     /// The LLM's cached answers: list, clear, or save one as a cheat
     Cache {
@@ -226,7 +236,7 @@ fn run() -> Result<ExitCode> {
                 tui::Outcome::Cancelled => Ok(ExitCode::from(130)),
                 tui::Outcome::Selected(cmd, _origin) => {
                     // the same checks as for an answer: a destructive command shows the red box
-                    let Some(fin) = finalize(cmd, String::new())? else {
+                    let Some(fin) = finalize(cmd, String::new(), None)? else {
                         return Ok(ExitCode::from(130));
                     };
                     if !fin.message.is_empty() {
@@ -305,6 +315,17 @@ fn run() -> Result<ExitCode> {
             );
             Ok(ExitCode::SUCCESS)
         }
+        Command::Risk { command } => {
+            let assessment = risk::assess(&command.join(" "));
+            let level = match assessment.level {
+                risk::Level::Ok => "ok",
+                risk::Level::Caution => "caution",
+                risk::Level::Destructive => "destructive",
+            };
+            let rules: Vec<&str> = assessment.findings.iter().map(|f| f.rule).collect();
+            println!("{}", serde_json::json!({"level": level, "rules": rules}));
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Cache { action } => cache_command(action),
         Command::Doctor { programs, table } => {
             doctor(&programs, table);
@@ -318,6 +339,7 @@ fn run() -> Result<ExitCode> {
             per_tool,
             no_synonyms,
             confidence,
+            decide: use_decide,
         } => {
             let cfg = Config::load()?;
             embed::init(&cfg);
@@ -343,6 +365,17 @@ fn run() -> Result<ExitCode> {
                     "--fusion necesita 3 números separados por comas: peso de bm25,peso de significado,k"
                 )),
             };
+            let jev = if use_decide {
+                match decide::provider(&cfg) {
+                    Some(j) => Some(j),
+                    None => anyhow::bail!(tr(
+                        "--decide needs decide.provider = \"jev\" in the config",
+                        "--decide necesita decide.provider = \"jev\" en la config"
+                    )),
+                }
+            } else {
+                None
+            };
             eval::run(
                 &file,
                 mode,
@@ -355,6 +388,7 @@ fn run() -> Result<ExitCode> {
                     synonyms: no_synonyms.then_some(false),
                 },
                 confidence,
+                jev.as_ref(),
             )?;
             Ok(ExitCode::SUCCESS)
         }
@@ -381,7 +415,7 @@ fn run() -> Result<ExitCode> {
                 return match explore_list(&cfg)? {
                     None => Ok(ExitCode::from(130)),
                     Some(cmd) => {
-                        let Some(fin) = finalize(cmd, String::new())? else {
+                        let Some(fin) = finalize(cmd, String::new(), None)? else {
                             return Ok(ExitCode::from(130));
                         };
                         emit(format, &fin.command, &fin.message, "", false, fin.risk);
@@ -400,7 +434,16 @@ fn run() -> Result<ExitCode> {
                 return ask_llm_plain(&cfg, &question, None);
             }
             let db = index::open_synced(&cfg)?;
-            let candidates = ask::ask(&db, &question, if json { limit } else { 1 })?;
+            let mut candidates = ask::ask(&db, &question, if json { limit } else { ALTERNATIVES })?;
+            let mut jev_none = None;
+            if !json {
+                let decided = decide_found(&cfg, &question, candidates, false);
+                candidates = decided.found;
+                jev_none = decided.verdict.map(|v| v.none);
+                if !decided.note.is_empty() {
+                    eprintln!("pistasho: {}", decided.note);
+                }
+            }
             if json {
                 let out = serde_json::json!({
                     "question": question,
@@ -422,7 +465,9 @@ fn run() -> Result<ExitCode> {
                 println!("{}", serde_json::to_string_pretty(&out)?);
                 return Ok(ExitCode::SUCCESS);
             }
-            if !json && (llm::wanted(&cfg, candidates.first()) || llm::unknown_provider(&cfg).is_some()) {
+            if !json
+                && (llm::wanted(&cfg, candidates.first(), jev_none) || llm::unknown_provider(&cfg).is_some())
+            {
                 // a failed LLM falls back to the local best, if there is one
                 return ask_llm_plain(&cfg, &question, candidates.first().map(|c| c.entry.cmd.as_str()));
             }
@@ -573,6 +618,77 @@ fn llm_resolve(cfg: &Config, db: &db::Db, question: &str, spinner: bool) -> LlmO
         Ok(None) => LlmOutcome::Off,
         Err(e) => LlmOutcome::Failed(format!("✗ llm: {e}")),
     }
+}
+
+/// The local candidates after the decision model has had a look.
+struct Decided {
+    found: Vec<ask::Candidate>,
+    /// What it made of them; `None` when it is off, not needed (the best answer is yours) or failed.
+    verdict: Option<decide::Verdict>,
+    /// Why it did not answer, for the line under the prompt.
+    note: String,
+}
+
+/// Lets the decision model re-order the tldr candidates, behind the spinner if there is a screen.
+/// Failing is not an error: the local order stays.
+fn decide_found(cfg: &Config, question: &str, found: Vec<ask::Candidate>, spinner: bool) -> Decided {
+    let off = |found| Decided {
+        found,
+        verdict: None,
+        note: String::new(),
+    };
+    if let Some(name) = decide::unknown_provider(cfg) {
+        return Decided {
+            note: format!(
+                "✗ decide: {} “{name}” (jev)",
+                tr("unknown provider", "proveedor desconocido")
+            ),
+            ..off(found)
+        };
+    }
+    let Some(jev) = decide::provider(cfg) else {
+        return off(found);
+    };
+    if found
+        .first()
+        .map_or(true, |c| c.entry.source != index::Source::Tldr)
+    {
+        return off(found);
+    }
+    // `apply` consumes the candidates: keep a copy to fall back on if the call fails
+    let backup = found.clone();
+    let result = if spinner {
+        prompt::with_spinner(|| decide::apply(&jev, question, found)).and_then(|r| r)
+    } else {
+        decide::apply(&jev, question, found)
+    };
+    match result {
+        Ok((found, verdict)) => Decided {
+            found,
+            verdict,
+            note: String::new(),
+        },
+        Err(e) => Decided {
+            note: format!("✗ decide: {e}"),
+            ..off(backup)
+        },
+    }
+}
+
+/// The decision model's opinion on how destructive a command template is (never a command with
+/// your values in it). `None` when it is off, the rules already say destructive, or it failed:
+/// the rules still apply either way.
+fn decide_risk(cfg: &Config, template: &str, spinner: bool) -> Option<f64> {
+    if !cfg.decide.risk || risk::assess(template).level == risk::Level::Destructive {
+        return None;
+    }
+    let jev = decide::provider(cfg)?;
+    let result = if spinner {
+        prompt::with_spinner(|| jev.destructive(template)).and_then(|r| r)
+    } else {
+        jev.destructive(template)
+    };
+    result.ok()
 }
 
 /// `· Ctrl-Space: see N more`, when there are other candidates to see.
@@ -729,22 +845,29 @@ fn ask_on_prompt(
     let height = search_height(cfg, None, false);
     let mut printed = false;
     let mut installed_note = String::new();
-    let (command, message, question) = match prompt::read_question(initial)? {
+    let (command, message, question, model_risk) = match prompt::read_question(initial)? {
         prompt::Answer::Cancelled => return Ok(ExitCode::from(130)),
         prompt::Answer::Explore => match explore_list(cfg)? {
             None => return Ok(ExitCode::from(130)),
-            Some(cmd) => (cmd, String::new(), String::new()),
+            Some(cmd) => (cmd, String::new(), String::new(), None),
         },
         prompt::Answer::Question(question) => {
             let started = std::time::Instant::now();
             let db = index::open_synced(cfg)?;
             let found = prompt::with_spinner(|| ask::ask(&db, &question, ALTERNATIVES))??;
+            // the decision model (if on) re-orders the tldr candidates and says when none fits
+            let decided = decide_found(cfg, &question, found, true);
+            let (found, verdict) = (decided.found, decided.verdict);
+            // a service that just failed is not asked again for the risk (it would only wait twice)
+            let decide_failed = !decided.note.is_empty();
             let more = found.len().saturating_sub(1);
             // the LLM (or what it answered before) takes over when nothing local matches or the
             // best match is shaky; its failure only matters if there is nothing local to show
             let mut llm_note = String::new();
             let mut from_llm = None;
-            if llm::wanted(cfg, found.first()) || llm::unknown_provider(cfg).is_some() {
+            if llm::wanted(cfg, found.first(), verdict.as_ref().map(|v| v.none))
+                || llm::unknown_provider(cfg).is_some()
+            {
                 match llm_resolve(cfg, &db, &question, true) {
                     LlmOutcome::Command(command, message) => from_llm = Some((command, message)),
                     LlmOutcome::Failed(message) if found.is_empty() => {
@@ -757,20 +880,33 @@ fn ask_on_prompt(
             // how long resolving took, taken now: the box below waits for the user
             let resolved_ms = started.elapsed().as_millis();
             // what is offered: its command, the line under the prompt, programs it lacks
-            let (offered, mut message, missing, is_llm) = match (from_llm, found.first()) {
+            let (offered, mut message, missing, is_llm, public) = match (from_llm, found.first()) {
                 (Some((command, message)), _) => {
                     // the local candidates are still the alternatives of a second Ctrl-Space
                     let message = with_more_hint(message, found.len());
                     let missing = system::missing_binaries(&packages::adapt(&command).command);
-                    (command, message, missing, true)
+                    (command, message, missing, true, true)
                 }
                 (None, Some(best)) => {
                     let mut message =
                         found_message(best.entry.source.tag(), &best.entry.tool, resolved_ms, more);
-                    if !llm_note.is_empty() {
-                        message = format!("{message} · {llm_note}");
+                    // the model's confidence, when it picked this one (not when it said "none")
+                    if let Some(v) = verdict.as_ref().filter(|v| !v.none) {
+                        message = format!("{message} · ✦ jev {:.0}%", v.confidence * 100.0);
                     }
-                    (best.entry.cmd.clone(), message, best.missing.clone(), false)
+                    for note in [&decided.note, &llm_note] {
+                        if !note.is_empty() {
+                            message = format!("{message} · {note}");
+                        }
+                    }
+                    let public = best.entry.source == index::Source::Tldr;
+                    (
+                        best.entry.cmd.clone(),
+                        message,
+                        best.missing.clone(),
+                        false,
+                        public,
+                    )
                 }
                 (None, None) => {
                     if send_to.is_some() {
@@ -822,6 +958,13 @@ fn ask_on_prompt(
                 );
             }
             let template = alternative.unwrap_or_else(|| offered.clone());
+            // the decision model also gives an opinion on the risk, of the template only: your own
+            // commands and the values you fill in never go anywhere
+            let model_risk = if (public || chosen_alternative) && !decide_failed {
+                decide_risk(cfg, &template, true)
+            } else {
+                None
+            };
             // the popup lists the local candidates to pick from; an LLM answer is not one of them
             let command = if send_to.is_some() && !chosen_alternative && !is_llm {
                 match pick_alternative(cfg, &question, &offered, true)? {
@@ -843,10 +986,10 @@ fn ask_on_prompt(
             } else {
                 template
             };
-            (command, message, question)
+            (command, message, question, model_risk)
         }
     };
-    let Some(fin) = finalize(command, message)? else {
+    let Some(fin) = finalize(command, message, model_risk)? else {
         return Ok(ExitCode::from(130));
     };
     let mut message = fin.message;
@@ -875,11 +1018,14 @@ struct Final {
 /// on the prompt, edit it, or drop it. `None` means dropped.
 ///
 /// Nothing is run: leaving a command on the prompt is writing text.
-fn finalize(command: String, message: String) -> Result<Option<Final>> {
-    let mut command = command;
+fn finalize(command: String, message: String, model_risk: Option<f64>) -> Result<Option<Final>> {
+    let (mut command, mut model_risk) = (command, model_risk);
     loop {
         let adapted = packages::adapt(&command);
-        let assessment = risk::assess(&adapted.command);
+        let mut assessment = risk::assess(&adapted.command);
+        if let Some(p) = model_risk {
+            assessment = risk::with_model(assessment, p);
+        }
         if assessment.level == risk::Level::Destructive {
             match confirm_destructive(&adapted.command, &assessment)? {
                 tui::RiskChoice::Leave => {}
@@ -888,6 +1034,8 @@ fn finalize(command: String, message: String) -> Result<Option<Final>> {
                     // edited text is checked again from the top; giving up goes back to the box
                     if let Some(edited) = prompt::edit_command(&adapted.command)? {
                         command = edited;
+                        // the model judged the template, not what the user typed
+                        model_risk = None;
                     }
                     continue;
                 }
@@ -1008,6 +1156,39 @@ fn install_json(bin: &str) -> Option<serde_json::Value> {
 }
 
 /// `pistasho doctor`: what this machine is and what it would take to get a program.
+/// Whether the decision model is on and ready; never shows the key, only whether it is there.
+fn decide_line() -> String {
+    let cfg = Config::load().unwrap_or_default();
+    if let Some(name) = decide::unknown_provider(&cfg) {
+        return format!(
+            "{} “{name}” (jev)",
+            tr("unknown provider", "proveedor desconocido")
+        );
+    }
+    if cfg.decide.provider != "jev" {
+        return tr(
+            "off (decide.provider = \"none\")",
+            "apagado (decide.provider = \"none\")",
+        )
+        .into();
+    }
+    let var = cfg
+        .decide
+        .api_key_env
+        .clone()
+        .unwrap_or_else(|| decide::DEFAULT_KEY_ENV.into());
+    let risk = if cfg.decide.risk {
+        tr("choice + risk", "elección + riesgo")
+    } else {
+        tr("choice only", "solo elección")
+    };
+    if std::env::var(&var).is_ok_and(|k| !k.trim().is_empty()) {
+        format!("jev · {risk}")
+    } else {
+        format!("jev · {risk} · ✗ {} {var}", tr("set", "define"))
+    }
+}
+
 /// Whether the LLM fallback is on and ready; never shows the key, only whether it is there.
 fn llm_line() -> String {
     let cfg = Config::load().unwrap_or_default();
@@ -1138,6 +1319,7 @@ fn doctor(programs: &[String], table: bool) {
     if !table {
         println!("{:<9} {}", tr("Meaning:", "Significado:"), embeddings_line());
         println!("{:<9} {}", "LLM:", llm_line());
+        println!("{:<9} {}", tr("Decision:", "Decisión:"), decide_line());
     }
     if table {
         let Some(manager) = manager else { return };
@@ -1226,7 +1408,7 @@ fn ask_alternatives(cfg: &Config, question: &str, current: &str, format: OutputF
         None => Ok(ExitCode::from(130)),
         Some((cmd, origin)) => {
             let message = format!("✓ {} · {origin}", tr("replaced", "reemplazado"));
-            let Some(fin) = finalize(cmd, message)? else {
+            let Some(fin) = finalize(cmd, message, None)? else {
                 return Ok(ExitCode::from(130));
             };
             emit(format, &fin.command, &fin.message, question, false, fin.risk);

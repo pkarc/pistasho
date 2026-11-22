@@ -220,3 +220,43 @@ La capa de decisión (Laya / Jev) no se construye. Resumen de lo medido y averig
 
 Y la decisión del usuario de no depender de modelos locales pesados descarta Laya local, el daemon y el servidor en el Proxmox. Queda abierta una puerta barata: si hay clave de Jev, medir `choice` sobre los 10 mejores con `eval`.
 
+## Fase 3 reabierta · Jev (2026-11-22)
+
+Con una clave de Jev (`TYPESAFE_API_KEY`) se midió antes de construir (`scripts/jev_experiment.py`; se envían solo preguntas de `eval` y candidatos de tldr, sin historial ni atajos). El formato real de la API (`POST /v1/systemone`, `Authorization: Bearer`, `state` + `questions` con `criteria`; respuesta con `choice`, `confidence`, `probabilities` o `noul`) se verificó con una llamada mínima: la documentación de terceros era incompleta.
+
+### `choice` sobre los mejores candidatos locales + "none"
+
+| | originales (101) top-1 / top-3 | sintéticas (287) top-1 / top-3 |
+|---|---|---|
+| orden local (híbrido) | 52 / 74 | 48 / 67 |
+| Jev sobre 10 candidatos (experimento) | 79 / 85 | 73 / 83 |
+| Jev sobre 20 candidatos (experimento) | 82 / 92 | 76 / 89 |
+| Jev sobre 30 candidatos (experimento) | 82 / 92 | 75 / 90 |
+| **implementación real, 20 candidatos (`eval --decide`)** | **83 / 92** | **76 / 88** |
+
+Con 10 candidatos el tope era el recall de la búsqueda local (85%: lo que no trae, Jev no lo puede elegir); con 20 sube a 93% / 91% y con 30 casi no cambia, así que se envían 20 (`decide::MAX_OPTIONS`) a la misma latencia. En modo `--decide` la columna `recall@10` de `eval` mide el top-10 después del reordenamiento, por eso sube.
+
+- Latencia de la llamada: mediana ≈ 200 ms, p95 ≈ 270 ms.
+- **Calibración:** cuando Jev elige un candidato con confianza ≥ 0.95 acierta el 97% (de 34 respuestas en las originales y de 71 en las sintéticas); entre 0.8 y 0.95, 77–81%; bajo 0.8, 70–71%.
+- **"none"** (13–16% de las preguntas): el candidato local acierta solo el 20–23% ahí, frente a 53–57% cuando Jev elige uno. Es la señal para llamar al LLM: en el grupo de puntaje local dudoso (< 0.20), Jev lo marca "none" en 42–56% de los casos, y cuando elige uno acierta 58–67% frente a 22–29% del orden local.
+- Una política "confiar en Jev solo con confianza ≥ t" rinde menos que usar siempre su orden (t = 0: 75% / 71%; t = 0.95: 61% / 56%), así que se usa siempre su orden.
+- Con Jev, la parte que queda es el recall (85%): lo que la búsqueda local no trae, el modelo no lo puede elegir.
+
+### `noul` "¿es destructivo?" contra las reglas fijas (63 comandos etiquetados a mano, 29 destructivos)
+
+| | destructivos que caza | falsas alarmas |
+|---|---|---|
+| reglas fijas | 17 / 29 | 0 |
+| Jev solo, noul ≥ 0.5 | 18 / 29 | 0 |
+| reglas + Jev (cortes 0.65 rojo, 0.3 aviso si las reglas dicen ok) | **21 / 29** | **0** |
+
+Los que Jev suma con el corte final: `find / -name '*.log' -delete`, `truncate -s 0 …/postgresql/…`, `rm -rf /var/lib/docker`, `tar czf … / --remove-files` (`docker system prune -af --volumes`, 0.53, queda en aviso). Ninguno de los dos caza `iptables -F && iptables -P INPUT DROP` (noul 0.08) ni la bomba fork (0.12): las reglas fijas siguen siendo la red principal.
+
+**Revisión con plantillas reales.** Lo que se envía en producción es la plantilla de tldr con sus `{{marcadores}}`, no un comando relleno, y los puntajes cambian: sobre 20 plantillas, las inofensivas (`ls -la {{path}}`, `tar czf …`, `ssh {{user}}@{{host}}`, `mkdir -p …`) sacaron ≤ 0.20; `dd … of={{/dev/sdX}}` 0.93, `mkfs.ext4 {{/dev/sdXN}}` 0.91, `DROP TABLE {{table}}` 0.70, `shred` 0.67; y un simple `rm {{path/to/file}}` 0.55, `rm -rf {{path/to/directory}}` 0.59, `docker system prune` 0.51, `git reset --hard {{commit}}` 0.41, `git push --force` 0.31 y `chmod -R 777 {{dir}}` 0.04 (este último lo cubren las reglas sobre `/`). Con el corte inicial de 0.5 cada `rm` habría abierto la caja roja: por eso el corte final es 0.65.
+
+**Margen fino:** muestras pequeñas (63 comandos, 20 plantillas) y etiquetas mías. El modelo solo puede subir el nivel, nunca bajarlo, y una caja roja de más cuesta un Enter.
+
+### Costes
+
+~200 ms por llamada con 10, 20 o 30 candidatos (una para elegir y otra para el riesgo, en serie) y $0.042 por millón de tokens de entrada (≈ 350 tokens con 2 opciones, ~1000 con 20): evaluar los 388 casos costó céntimos. Sin caché de veredictos.
+

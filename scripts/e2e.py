@@ -515,7 +515,178 @@ def scenario_llm():
             ENV.pop(k, None)
 
 
-SCENARIOS = [scenario_question, scenario_install, scenario_alternative, scenario_risk, scenario_popup, scenario_llm]
+class MockJev:
+    """A stand-in for Jev's /v1/systemone on localhost. For a `choice` it puts `prefer` (1-based) on
+    top with probability 0.9, or answers "none"; for a `noul` it answers `noul`. Records requests."""
+
+    def __init__(self, prefer=1, none=False, noul=0.05, status=200):
+        import http.server
+        import json
+        import threading
+
+        outer = self
+        self.requests = []
+        self.prefer, self.none, self.noul, self.status = prefer, none, noul, status
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+                outer.requests.append((dict(self.headers), body))
+                answers = {}
+                for name, q in body["questions"].items():
+                    if q["type"] == "choice":
+                        opts = [k for k in q["criteria"] if k != "none"]
+                        probs = {k: 0.02 for k in q["criteria"]}
+                        top = "none" if outer.none else opts[min(outer.prefer, len(opts)) - 1]
+                        probs[top] = 0.9
+                        answers[name] = {"type": "choice", "choice": top, "confidence": 0.9, "probabilities": probs}
+                    else:
+                        answers[name] = {"type": "noul", "noul": outer.noul}
+                code = outer.status
+                payload = {"model": "jev-e2e", "answers": answers} if code == 200 else {"error": {"message": "invalid key"}}
+                data = json.dumps(payload).encode()
+                self.send_response(code)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def stop(self):
+        self.server.shutdown()
+
+
+class MockTldr:
+    """Serves a tiny tldr zip so the scenario has tldr pages without the network."""
+
+    PAGES = {
+        "zip": ("Package and compress files into a zip archive.", "Compress a folder into an archive", "zip -r folder.zip folder"),
+        "tar": ("Archiving utility.", "Compress a folder into an archive", "tar czf folder.tgz folder"),
+        "gzip": ("Compress files.", "Compress a folder file into an archive", "gzip file.txt"),
+    }
+
+    def __init__(self):
+        import http.server
+        import io
+        import threading
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for name, (summary, desc, cmd) in self.PAGES.items():
+                z.writestr(f"pages/common/{name}.md", f"# {name}\n\n> {summary}\n\n- {desc}:\n\n`{cmd}`\n")
+        data = buf.getvalue()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/tldr.zip"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def stop(self):
+        self.server.shutdown()
+
+
+def scenario_decide():
+    print("decision model (against local stand-ins)")
+    cfg = f"{ROOT}/cfg/pistasho/config.toml"
+    cheats = f"{ROOT}/cfg/pistasho/cheats.toml"
+    saved, saved_cheats = open(cfg).read(), open(cheats).read()
+    tldr = MockTldr()
+    base = saved + f'tldr_url = "{tldr.url}"\n\n[search]\nembeddings = false\n\n[decide]\nprovider = "jev"\n'
+    open(cfg, "w").write(base)
+    # a cheat of yours with a marker: it must never reach the model
+    open(cheats, "w").write(saved_cheats + '\n[[cheat]]\ncmd = "scp ~/SECRETHOST/notes.txt ."\ndesc = "folder notes"\n')
+    update = subprocess.run([BIN, "update"], capture_output=True, text=True, env=dict(os.environ, **ENV))
+    check("the stand-in tldr pages are indexed", update.returncode == 0, update.stderr[-200:])
+    question = "compress a folder into an archive"
+    local = subprocess.run([BIN, "ask", "--json", "-n", "5", question], capture_output=True, text=True, env=dict(os.environ, **ENV, TYPESAFE_API_KEY=""))
+    import json
+    cmds = [c["command"] for c in json.loads(local.stdout)["candidates"] if c["source"] == "tldr"]
+    check("there are tldr candidates to choose from", len(cmds) >= 2, str(cmds))
+
+    def session(jev, **extra):
+        ENV.update(TYPESAFE_BASE_URL=jev.url, TYPESAFE_API_KEY="e2e-fake-key", **extra)
+        t = Tmux("decide")
+        zsh_session(t)
+        return t
+
+    def clean():
+        for k in ("TYPESAFE_BASE_URL", "TYPESAFE_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"):
+            ENV.pop(k, None)
+
+    try:
+        # 1. the model puts the second candidate first
+        jev = MockJev(prefer=2)
+        t = session(jev)
+        ask(t, question, 2.0)
+        check("the model's choice lands on the prompt", f"PROMPT> {cmds[1]}" in t.text(), t.text()[-300:])
+        check("with its confidence on the line", "✦ jev 90%" in t.text())
+        check("only tldr text and the question were sent", jev.requests and "SECRETHOST" not in str(jev.requests) and "e2e-fake-key" not in str([b for _, b in jev.requests]))
+        check("the key travels in the Authorization header", jev.requests[0][0].get("authorization") == "Bearer e2e-fake-key")
+        t.stop(); jev.stop(); clean()
+
+        # 2. "none of these": the LLM takes over
+        jev = MockJev(none=True)
+        llm = MockLLM("echo from the llm")
+        open(cfg, "w").write(base + '\n[llm]\nprovider = "anthropic"\n')
+        t = session(jev, ANTHROPIC_BASE_URL=llm.url, ANTHROPIC_API_KEY="sk-ant-e2e-fake")
+        ask(t, question + " now", 2.2)
+        check("none of the candidates: the LLM answers", "PROMPT> echo from the llm" in t.text() and "✦ llm" in t.text(), t.text()[-300:])
+        t.stop(); jev.stop(); llm.stop(); clean()
+        open(cfg, "w").write(base)
+
+        # 3. the model's opinion on risk: a harmless-looking template flagged, then not
+        jev = MockJev(prefer=1, noul=0.9)
+        t = session(jev)
+        ask(t, question + " safely", 2.2)
+        check("a command the rules pass but the model flags opens the red box", "destructive command" in t.text() and "decision model" in t.text(), t.text()[-300:])
+        t.keys("Enter", wait=1.2)
+        check("it stays on the prompt, marked, not run", "⚠ destructive" in t.text())
+        t.stop(); jev.stop(); clean()
+        jev = MockJev(prefer=1, noul=0.1)
+        t = session(jev)
+        ask(t, question + " calmly", 2.2)
+        check("a low probability changes nothing", "destructive command" not in t.text() and "⚠" not in t.text(), t.text()[-300:])
+        t.stop(); jev.stop(); clean()
+
+        # 4. your own command leads: nothing is sent
+        jev = MockJev(prefer=2)
+        t = session(jev)
+        ask(t, "cuanto tiempo lleva encendido el sistema", 1.8)
+        check("your cheat is the answer", "PROMPT> uptime --pretty" in t.text())
+        check("and the model was not asked", not jev.requests)
+        t.stop(); jev.stop(); clean()
+
+        # 5. the model is down: the local answer still arrives, with the reason
+        jev = MockJev(status=401)
+        t = session(jev)
+        ask(t, question + " again", 2.0)
+        check("a failed decision keeps the local answer", f"PROMPT> {cmds[0]}" in t.text() or "PROMPT> " in t.text() and "✗ decide" in t.text(), t.text()[-300:])
+        check("and says why", "✗ decide" in t.text())
+        t.stop(); jev.stop(); clean()
+    finally:
+        open(cfg, "w").write(saved)
+        open(cheats, "w").write(saved_cheats)
+        clean()
+        tldr.stop()
+
+
+SCENARIOS = [scenario_question, scenario_install, scenario_alternative, scenario_risk, scenario_popup, scenario_llm, scenario_decide]
 
 
 def main():

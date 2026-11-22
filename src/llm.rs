@@ -123,12 +123,16 @@ pub const DEFAULT_THRESHOLD: f64 = 0.20;
 
 /// Whether to ask the LLM for this question, given the best local candidate: a provider is set
 /// and either nothing matched or (with `when = "unsure"`) the match is shaky.
-pub fn wanted(cfg: &Config, best: Option<&crate::ask::Candidate>) -> bool {
+///
+/// `jev_none` is the decision model's verdict when it looked at the candidates: whether it found
+/// none of them right. It knows better than the score does, so when there is one it decides.
+pub fn wanted(cfg: &Config, best: Option<&crate::ask::Candidate>, jev_none: Option<bool>) -> bool {
     if cfg.llm.provider.is_empty() || cfg.llm.provider == "none" {
         return false;
     }
-    match cfg.llm.when.as_str() {
-        "nomatch" => best.is_none(),
+    match (cfg.llm.when.as_str(), jev_none) {
+        ("nomatch", _) => best.is_none(),
+        (_, Some(none)) => none || best.is_none(),
         _ => crate::ask::is_unsure(best, cfg.llm.threshold.unwrap_or(DEFAULT_THRESHOLD)),
     }
 }
@@ -294,7 +298,7 @@ impl Generate for Anthropic {
 
 /// POSTs JSON and returns the JSON answer. Errors say why in a short line and never echo the
 /// request (which holds the question and, in a header, the key).
-fn post_json(
+pub fn post_json(
     url: &str,
     headers: &[(&str, &str)],
     body: &Value,
@@ -340,8 +344,8 @@ fn status_message(code: u16, detail: &str) -> String {
             "rate limited, try again in a moment",
             "límite de uso, prueba en un momento",
         ),
-        529 | 503 => tr("the LLM is overloaded", "el LLM está saturado"),
-        _ => tr("the LLM returned an error", "el LLM devolvió un error"),
+        529 | 503 => tr("the service is overloaded", "el servicio está saturado"),
+        _ => tr("the service returned an error", "el servicio devolvió un error"),
     };
     if detail.is_empty() {
         format!("{what} (HTTP {code})")
@@ -515,15 +519,22 @@ mod tests {
             fused: true,
         };
         // default: `unsure`, threshold 0.20
-        assert!(wanted(&cfg, None));
-        assert!(wanted(&cfg, Some(&best)), "0.12 is shaky");
+        assert!(wanted(&cfg, None, None));
+        assert!(wanted(&cfg, Some(&best), None), "0.12 is shaky");
         best.score = 0.25;
-        assert!(!wanted(&cfg, Some(&best)), "0.25 is solid");
+        assert!(!wanted(&cfg, Some(&best), None), "0.25 is solid");
         cfg.llm.threshold = Some(0.30);
-        assert!(wanted(&cfg, Some(&best)), "the threshold is configurable");
+        assert!(wanted(&cfg, Some(&best), None), "the threshold is configurable");
+        // the decision model's verdict beats the score either way
+        assert!(!wanted(&cfg, Some(&best), Some(false)));
+        assert!(wanted(&cfg, Some(&best), Some(true)));
         cfg.llm.when = "nomatch".into();
-        assert!(!wanted(&cfg, Some(&best)));
-        assert!(wanted(&cfg, None));
+        assert!(!wanted(&cfg, Some(&best), None));
+        assert!(
+            !wanted(&cfg, Some(&best), Some(true)),
+            "nomatch only asks when nothing matched"
+        );
+        assert!(wanted(&cfg, None, None));
     }
 
     #[test]
@@ -566,7 +577,7 @@ mod tests {
         assert!(provider(&cfg).is_none());
         let db = crate::db::Db::open_in_memory().unwrap();
         assert!(resolve(&cfg, &db, "anything").unwrap().is_none());
-        assert!(!wanted(&cfg, None), "off means never asked");
+        assert!(!wanted(&cfg, None, Some(true)), "off means never asked");
         cfg.llm.provider = "anthropic".into();
         assert_eq!(provider(&cfg).unwrap().model(), DEFAULT_MODEL);
     }
