@@ -133,6 +133,45 @@ la familia Qwen3; se verifica la licencia del punto de control exacto antes de u
 ejemplo NL2Bash (descripciones humanas en inglés de comandos de bash), y datos reales del programa opt-in de la
 visión a largo plazo.
 
+## Generar las preguntas con un modelo abierto en un servicio en línea (decisión del usuario, 2026-11-22)
+
+La 5090 no se usa en esta fase, así que las preguntas con estilo humano las escribe un **modelo de pesos
+abiertos en un servicio alojado**. Se comprobaron las dos capas de términos:
+
+- **Modelos (fichas de Hugging Face):** Qwen3.5-27B y Qwen3.5-35B-A3B (Apache-2.0, 201 idiomas, el modo
+  "thinking" viene activado y se apaga con `enable_thinking: false`), Gemma 4 31B-it / 12B-it / 26B-A4B-it
+  (la ficha declara Apache-2.0 y 35+ idiomas explícitos con español; el texto de la licencia no se pudo
+  verificar: el enlace redirige a un dominio que no es de Google y el repo no trae LICENSE), EuroLLM-22B
+  (Apache-2.0, español nativo, pero no está en estos servicios) y gpt-oss-20b (Apache-2.0). Descartados: Llama,
+  Gemma ≤ 3, los Mistral grandes o de licencia "other", Ministral-3-14B (licencia sin declarar).
+- **Servicios (textos vigentes):** [DeepInfra](https://deepinfra.com/terms) (15 oct 2026), [Together AI](https://www.together.ai/terms-of-service)
+  (19 may 2026) y [OpenRouter](https://openrouter.ai/terms) (31 ago 2026) **no restringen** entrenar con las
+  salidas (DeepInfra y Together solo prohíben competir con su propio negocio de inferencia; OpenRouter remite
+  a los términos de cada modelo, aquí Apache-2.0). Fireworks quedó fuera: un resumen indica que prohíbe usar el
+  contenido, que incluye las salidas, para entrenar IA, y no se leyó entero. Los precios consultados (por millón
+  de tokens, entrada / salida): Gemma 4 31B ≈ $0.20 / $0.40 y Qwen3.5-27B ≈ $0.26 / $2.60 en DeepInfra; todo el
+  tldr cuesta unos $1.5 con Gemma y unos $6 con Qwen (Qwen sin "thinking").
+
+Herramientas (`training/`): `gen_questions.py` (cualquier API compatible con OpenAI; la clave se lee de una
+variable de entorno y nunca se imprime; reanudable; descarta preguntas que nombran la herramienta o sus
+opciones; el modelo devuelve una lista vacía si la entrada es demasiado genérica), `quality_report.py`
+(comparación entre modelos: vacías, idioma, repeticiones, si la pregunta recupera su ejemplo con
+`pistasho ask`, y una hoja de lectura **a ciegas** con la clave aparte) y `make_data.py --generated`
+(añade esas preguntas, con la etiqueta por construcción). Todo probado contra un servidor falso, **no contra
+un servicio real**.
+
+```sh
+export DEEPINFRA_API_KEY=...      # la clave la pones tú en tu shell; nunca en el chat
+python3 training/gen_questions.py --base-url https://api.deepinfra.com/v1/openai --key-env DEEPINFRA_API_KEY \
+    --model google/gemma-4-31B-it --limit 600 --out training/out/gen/gemma.jsonl
+python3 training/gen_questions.py ... --model Qwen/Qwen3.5-27B --out training/out/gen/qwen.jsonl \
+    --extra-json '{"chat_template_kwargs": {"enable_thinking": false}}'
+python3 training/quality_report.py training/out/gen/gemma.jsonl training/out/gen/qwen.jsonl --retrieve \
+    --review training/out/gen/review.md
+```
+
+(Comprobar el identificador exacto del modelo y el campo para apagar el "thinking" en la página del servicio.)
+
 ## Puerta de decisión
 
 Con la tabla de `summary.py`, la variante elegida debe cumplir:

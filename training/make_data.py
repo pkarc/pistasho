@@ -162,6 +162,8 @@ def main():
     ap.add_argument("--cands", type=int, default=MAX_OPTIONS, help="options per decision (the rest of the retrieved ones are dropped)")
     ap.add_argument("--fmt", choices=FORMATS, default="td", help="how an option reads (common.option_text)")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--generated", nargs="*", default=[], help="JSONL from gen_questions.py: human-sounding questions per example")
+    ap.add_argument("--generated-only", action="store_true", help="use only the generated questions, not the ones derived from the descriptions")
     ap.add_argument("--mix", type=float, default=0.25, help="share of entries that also get a code-switched question (0 = none)")
     args = ap.parse_args()
 
@@ -175,9 +177,15 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     vocab = {w for e in entries for w in re.findall(r"[a-z]+", e["desc"].lower())}
+    generated = {}
+    for path in args.generated:
+        for line in open(path):
+            rec = json.loads(line)
+            generated.setdefault((rec["tool"], rec["cmd"]), []).extend((t, l) for l, t in rec["questions"])
     work = []
     for e in entries:
-        for text, lang in variants(e["desc"], e["alt"], rng, args.mix, vocab):
+        derived = [] if args.generated_only else variants(e["desc"], e["alt"], rng, args.mix, vocab)
+        for text, lang in derived + generated.get((e["tool"], e["cmd"]), []):
             if len(text.split()) >= 2:
                 work.append((e, text, lang))
     print(f"{len(entries)} entries -> {len(work)} questions", file=sys.stderr)
