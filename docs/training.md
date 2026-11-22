@@ -108,6 +108,31 @@ la imprime); si sigue sin dar paridad, exportar sin podar (`--prune-from` vacío
 5. **El formato de entrada de Laya vive en código Python** (`build_sequence`, `build_head`): para usarlo en
    Rust hay que portarlo idéntico (o exportar el preprocesado). Se hace solo si el modelo pasa la puerta.
 
+## Qué datos se pueden usar: los términos de Anthropic y de TypeSafe (2026-11-22)
+
+Se propuso generar preguntas con un modelo de Anthropic y etiquetar con Jev (destilar). **Se leyeron los textos
+vigentes y no se puede**, así que no se envió nada (solo un piloto de 96 ejemplos públicos de tldr para ver la
+calidad, cuya salida no se guardó en ningún conjunto de datos):
+
+| Proveedor | Texto vigente | Consecuencia |
+|---|---|---|
+| Anthropic, *Usage Policy* (12 nov 2026, "Do Not Abuse Our Platform") | "Use outputs to train an AI model (e.g., 'model scraping' or 'model distillation') **without prior authorization from Anthropic**" | Entrenar Laya con preguntas generadas por Claude **necesita autorización previa de Anthropic**, sea o no un modelo competidor. |
+| Anthropic, *Commercial Terms* D.4 (17 jun 2025) | No acceder al servicio "to build a competing product or service, including to train competing AI models" | Además, el riesgo de que se lea como competidor. |
+| TypeSafe, *Master Customer Agreement* (23 sep 2026) | "use the Services or any Output to perform model distillation, **train a model to imitate the output of the Services**, or develop … a similar or competing product or service" | Etiquetar con Jev para entrenar Laya **está prohibido** de forma explícita: es exactamente destilar. |
+
+Lo que sí es independiente de ambos: usar a Jev o a Claude para **medir** (los experimentos de `eval`, `--decide`)
+no entrena nada. También queda fuera cualquier pregunta de entrenamiento escrita por el asistente (Claude): son
+salidas de Claude. **Los bancos `eval/questions-synth.toml` se escribieron como banco de prueba, no de
+entrenamiento, y deben seguir así.** (La recomendación anterior de "destilar Jev" y de mezclar tldr, Jev y
+Anthropic no se había comprobado contra estos términos y era incorrecta.)
+
+Vías que quedan: (1) un modelo abierto con licencia que permita usar sus salidas (por ejemplo Apache-2.0, como
+la familia Qwen3; se verifica la licencia del punto de control exacto antes de usarlo) que escriba las preguntas
+**en la propia 5090**, un proceso intermedio y sin terceros; (2) pedir autorización por escrito a Anthropic;
+(3) quedarse con tldr (en inglés y español, ya hecho) más conjuntos públicos con licencia permisiva, por
+ejemplo NL2Bash (descripciones humanas en inglés de comandos de bash), y datos reales del programa opt-in de la
+visión a largo plazo.
+
 ## Puerta de decisión
 
 Con la tabla de `summary.py`, la variante elegida debe cumplir:
