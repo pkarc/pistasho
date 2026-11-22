@@ -8,6 +8,7 @@ mod eval;
 mod history;
 mod i18n;
 mod index;
+mod llm;
 mod packages;
 mod placeholders;
 mod prompt;
@@ -110,10 +111,21 @@ enum Command {
         /// Do not add the synonyms of the question words (for A/B measurements)
         #[arg(long)]
         no_synonyms: bool,
+        /// Also print how often the best candidate is right by score (to choose `llm.threshold`)
+        #[arg(long)]
+        confidence: bool,
+    },
+    /// The LLM's cached answers: list, clear, or save one as a cheat
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
     },
     /// Turns a question into the best command (prints only the command)
     Ask {
         question: Vec<String>,
+        /// Ask the configured LLM instead of searching locally (needs `[llm]` in the config)
+        #[arg(long)]
+        llm: bool,
         /// Print the ranked candidates as JSON, with their scores, instead of just the best one
         #[arg(long)]
         json: bool,
@@ -149,6 +161,16 @@ enum Command {
 enum OutputFormat {
     Plain,
     Zsh,
+}
+
+#[derive(Subcommand)]
+enum CacheAction {
+    /// Shows what the LLM answered, newest first
+    List,
+    /// Forgets the answer to one question, or every answer
+    Clear { question: Vec<String> },
+    /// Saves the cached answer to a question in cheats.toml, so it is yours from now on
+    Save { question: Vec<String> },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -283,6 +305,7 @@ fn run() -> Result<ExitCode> {
             );
             Ok(ExitCode::SUCCESS)
         }
+        Command::Cache { action } => cache_command(action),
         Command::Doctor { programs, table } => {
             doctor(&programs, table);
             Ok(ExitCode::SUCCESS)
@@ -294,6 +317,7 @@ fn run() -> Result<ExitCode> {
             fusion,
             per_tool,
             no_synonyms,
+            confidence,
         } => {
             let cfg = Config::load()?;
             embed::init(&cfg);
@@ -330,11 +354,13 @@ fn run() -> Result<ExitCode> {
                     per_tool,
                     synonyms: no_synonyms.then_some(false),
                 },
+                confidence,
             )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Ask {
             question,
+            llm,
             json,
             limit,
             prompt,
@@ -369,8 +395,11 @@ fn run() -> Result<ExitCode> {
             if prompt {
                 return ask_on_prompt(&cfg, &initial, format, send_to.as_deref());
             }
-            let db = index::open_synced(&cfg)?;
             let question = question.join(" ");
+            if llm {
+                return ask_llm_plain(&cfg, &question, None);
+            }
+            let db = index::open_synced(&cfg)?;
             let candidates = ask::ask(&db, &question, if json { limit } else { 1 })?;
             if json {
                 let out = serde_json::json!({
@@ -392,6 +421,10 @@ fn run() -> Result<ExitCode> {
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
                 return Ok(ExitCode::SUCCESS);
+            }
+            if !json && (llm::wanted(&cfg, candidates.first()) || llm::unknown_provider(&cfg).is_some()) {
+                // a failed LLM falls back to the local best, if there is one
+                return ask_llm_plain(&cfg, &question, candidates.first().map(|c| c.entry.cmd.as_str()));
             }
             match candidates.first() {
                 Some(best) => {
@@ -472,6 +505,105 @@ fn emit(
 }
 
 /// Nothing matched: the output is the message, and the exit code is 1.
+/// `pistasho ask` without the interface: the LLM's command on stdout, how it was made on stderr.
+fn ask_llm_plain(cfg: &Config, question: &str, local: Option<&str>) -> Result<ExitCode> {
+    let db = index::open_synced(cfg)?;
+    match llm_resolve(cfg, &db, question, false) {
+        LlmOutcome::Command(command, message) => {
+            println!("{command}");
+            eprintln!("{message}");
+            Ok(ExitCode::SUCCESS)
+        }
+        LlmOutcome::Failed(message) => {
+            eprintln!("pistasho: {message}");
+            match local {
+                Some(command) => {
+                    println!("{command}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => Ok(ExitCode::from(1)),
+            }
+        }
+        LlmOutcome::Off => {
+            if let Some(command) = local {
+                println!("{command}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            eprintln!(
+                "pistasho: {}",
+                tr(
+                    "the LLM is off: set llm.provider in the config (pistasho config)",
+                    "el LLM está apagado: pon llm.provider en la config (pistasho config)"
+                )
+            );
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+/// What the LLM fallback came to.
+enum LlmOutcome {
+    /// Not configured: carry on with "no match".
+    Off,
+    /// A command and the line to show under the prompt.
+    Command(String, String),
+    /// It was asked and failed; the text says why.
+    Failed(String),
+}
+
+/// Asks the configured LLM (or finds what it answered before), behind the spinner if there is
+/// a screen. Nothing is sent unless `llm.provider` is set.
+fn llm_resolve(cfg: &Config, db: &db::Db, question: &str, spinner: bool) -> LlmOutcome {
+    if let Some(name) = llm::unknown_provider(cfg) {
+        return LlmOutcome::Failed(format!(
+            "✗ llm: {} “{name}” (anthropic)",
+            tr("unknown provider", "proveedor desconocido")
+        ));
+    }
+    if llm::provider(cfg).is_none() {
+        return LlmOutcome::Off;
+    }
+    let answer = if spinner {
+        prompt::with_spinner(|| llm::resolve(cfg, db, question)).and_then(|r| r)
+    } else {
+        llm::resolve(cfg, db, question)
+    };
+    match answer {
+        Ok(Some(answer)) => LlmOutcome::Command(answer.suggestion.command.clone(), llm::message(&answer)),
+        Ok(None) => LlmOutcome::Off,
+        Err(e) => LlmOutcome::Failed(format!("✗ llm: {e}")),
+    }
+}
+
+/// `· Ctrl-Space: see N more`, when there are other candidates to see.
+fn with_more_hint(mut message: String, more: usize) -> String {
+    if more > 0 {
+        message.push_str(" · ");
+        message.push_str(&more_hint(more));
+    }
+    message
+}
+
+fn more_hint(more: usize) -> String {
+    match i18n::lang() {
+        i18n::Lang::En => format!("Ctrl-Space: see {more} more"),
+        i18n::Lang::Es => format!("Ctrl-Space: ver {more} más"),
+    }
+}
+
+/// Reports a failure the way "no match" is reported (a popup keeps it on screen until a key).
+fn say_failure(format: OutputFormat, message: &str, popup: bool) -> ExitCode {
+    if popup {
+        let _ = prompt::notice(message);
+        return ExitCode::from(1);
+    }
+    match format {
+        OutputFormat::Zsh => print!("{message}"),
+        OutputFormat::Plain => eprintln!("pistasho: {message}"),
+    }
+    ExitCode::from(1)
+}
+
 fn no_match(format: OutputFormat) -> ExitCode {
     let message = tr(
         "✗ no match for that question",
@@ -608,23 +740,53 @@ fn ask_on_prompt(
             let db = index::open_synced(cfg)?;
             let found = prompt::with_spinner(|| ask::ask(&db, &question, ALTERNATIVES))??;
             let more = found.len().saturating_sub(1);
-            let Some(best) = found.into_iter().next() else {
-                if send_to.is_some() {
-                    // the popup closes with the process: keep the message on screen until a key
-                    prompt::notice(tr(
-                        "✗ no match for that question",
-                        "✗ ninguna coincidencia para esa pregunta",
-                    ))?;
-                    return Ok(ExitCode::from(1));
+            // the LLM (or what it answered before) takes over when nothing local matches or the
+            // best match is shaky; its failure only matters if there is nothing local to show
+            let mut llm_note = String::new();
+            let mut from_llm = None;
+            if llm::wanted(cfg, found.first()) || llm::unknown_provider(cfg).is_some() {
+                match llm_resolve(cfg, &db, &question, true) {
+                    LlmOutcome::Command(command, message) => from_llm = Some((command, message)),
+                    LlmOutcome::Failed(message) if found.is_empty() => {
+                        return Ok(say_failure(format, &message, send_to.is_some()))
+                    }
+                    LlmOutcome::Failed(message) => llm_note = message,
+                    LlmOutcome::Off => {}
                 }
-                return Ok(no_match(format));
-            };
+            }
             // how long resolving took, taken now: the box below waits for the user
             let resolved_ms = started.elapsed().as_millis();
-            let mut message = found_message(best.entry.source.tag(), &best.entry.tool, resolved_ms, more);
+            // what is offered: its command, the line under the prompt, programs it lacks
+            let (offered, mut message, missing, is_llm) = match (from_llm, found.first()) {
+                (Some((command, message)), _) => {
+                    // the local candidates are still the alternatives of a second Ctrl-Space
+                    let message = with_more_hint(message, found.len());
+                    let missing = system::missing_binaries(&packages::adapt(&command).command);
+                    (command, message, missing, true)
+                }
+                (None, Some(best)) => {
+                    let mut message =
+                        found_message(best.entry.source.tag(), &best.entry.tool, resolved_ms, more);
+                    if !llm_note.is_empty() {
+                        message = format!("{message} · {llm_note}");
+                    }
+                    (best.entry.cmd.clone(), message, best.missing.clone(), false)
+                }
+                (None, None) => {
+                    if send_to.is_some() {
+                        // the popup closes with the process: keep the message on screen until a key
+                        prompt::notice(tr(
+                            "✗ no match for that question",
+                            "✗ ninguna coincidencia para esa pregunta",
+                        ))?;
+                        return Ok(ExitCode::from(1));
+                    }
+                    return Ok(no_match(format));
+                }
+            };
             let mut alternative: Option<String> = None;
-            if !best.missing.is_empty() {
-                match offer_install(cfg, &best.entry.cmd)? {
+            if !missing.is_empty() {
+                match offer_install(cfg, &offered)? {
                     Install::NotNeeded => {}
                     Install::Cancelled => return Ok(ExitCode::from(130)),
                     Install::Alternative(command) => alternative = Some(command),
@@ -659,9 +821,10 @@ fn ask_on_prompt(
                     resolved_ms
                 );
             }
-            let template = alternative.unwrap_or_else(|| best.entry.cmd.clone());
-            let command = if send_to.is_some() && !chosen_alternative {
-                match pick_alternative(cfg, &question, &best.entry.cmd, true)? {
+            let template = alternative.unwrap_or_else(|| offered.clone());
+            // the popup lists the local candidates to pick from; an LLM answer is not one of them
+            let command = if send_to.is_some() && !chosen_alternative && !is_llm {
+                match pick_alternative(cfg, &question, &offered, true)? {
                     None => return Ok(ExitCode::from(130)),
                     Some((cmd, _origin)) => cmd,
                 }
@@ -845,6 +1008,42 @@ fn install_json(bin: &str) -> Option<serde_json::Value> {
 }
 
 /// `pistasho doctor`: what this machine is and what it would take to get a program.
+/// Whether the LLM fallback is on and ready; never shows the key, only whether it is there.
+fn llm_line() -> String {
+    let cfg = Config::load().unwrap_or_default();
+    if let Some(name) = llm::unknown_provider(&cfg) {
+        return format!("{} “{name}”", tr("unknown provider", "proveedor desconocido"));
+    }
+    if cfg.llm.provider != "anthropic" {
+        return tr(
+            "off (llm.provider = \"none\")",
+            "apagado (llm.provider = \"none\")",
+        )
+        .into();
+    }
+    let var = cfg
+        .llm
+        .api_key_env
+        .clone()
+        .unwrap_or_else(|| llm::DEFAULT_KEY_ENV.into());
+    let key = std::env::var(&var).is_ok_and(|k| !k.trim().is_empty());
+    let model = cfg.llm.model.clone().unwrap_or_else(|| llm::DEFAULT_MODEL.into());
+    let when = if cfg.llm.when == "nomatch" {
+        tr("only when nothing matches", "solo si nada coincide").to_string()
+    } else {
+        format!(
+            "{} < {}",
+            tr("when the best score is", "cuando el mejor puntaje es"),
+            cfg.llm.threshold.unwrap_or(llm::DEFAULT_THRESHOLD)
+        )
+    };
+    if key {
+        format!("anthropic · {model} · {when}")
+    } else {
+        format!("anthropic · {model} · ✗ {} {var}", tr("set", "define"))
+    }
+}
+
 /// Whether `ask` understands questions by meaning, and if not, why.
 fn embeddings_line() -> String {
     let cfg = Config::load().unwrap_or_default();
@@ -879,6 +1078,49 @@ fn embeddings_line() -> String {
     }
 }
 
+/// `pistasho cache`: look at, drop or keep the LLM's answers.
+fn cache_command(action: CacheAction) -> Result<ExitCode> {
+    let db = db::Db::open(&config::db_path()?)?;
+    match action {
+        CacheAction::List => {
+            let all = db.cache_list()?;
+            if all.is_empty() {
+                eprintln!("{}", tr("nothing cached yet", "no hay nada en la caché todavía"));
+            }
+            for a in all {
+                println!("{}\n  → {}\n  ({}, {})", a.question, a.command, a.model, a.risk);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        CacheAction::Clear { question } => {
+            let key = ask::normalize_question(&question.join(" "));
+            let n = db.cache_clear((!key.is_empty()).then_some(key.as_str()))?;
+            eprintln!("✓ {n} {}", tr("forgotten", "olvidadas"));
+            Ok(ExitCode::SUCCESS)
+        }
+        CacheAction::Save { question } => {
+            let text = question.join(" ");
+            let Some(answer) = db.cache_get(&ask::normalize_question(&text))? else {
+                eprintln!(
+                    "pistasho: {}",
+                    tr(
+                        "no cached answer for that question (pistasho cache list)",
+                        "no hay respuesta en caché para esa pregunta (pistasho cache list)"
+                    )
+                );
+                return Ok(ExitCode::from(1));
+            };
+            let path = index::add_cheat(Cheat {
+                cmd: answer.command.clone(),
+                desc: text,
+                tags: vec!["llm".into()],
+            })?;
+            eprintln!("✓ {} {}", tr("Added to", "Agregado a"), path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
 fn doctor(programs: &[String], table: bool) {
     let os = packages::detect_os();
     let manager = packages::Manager::detect();
@@ -895,6 +1137,7 @@ fn doctor(programs: &[String], table: bool) {
     );
     if !table {
         println!("{:<9} {}", tr("Meaning:", "Significado:"), embeddings_line());
+        println!("{:<9} {}", "LLM:", llm_line());
     }
     if table {
         let Some(manager) = manager else { return };
@@ -969,16 +1212,8 @@ fn explore_list(cfg: &Config) -> Result<Option<String>> {
 /// The line under the prompt after an answer: where it came from, how long it took, and how to
 /// get the other candidates.
 fn found_message(source: &str, tool: &str, ms: u128, more: usize) -> String {
-    let mut message = format!("⚡ local · {source}/{tool} · {ms} ms");
-    if more > 0 {
-        let hint = match i18n::lang() {
-            i18n::Lang::En => format!("Ctrl-Space: see {more} more"),
-            i18n::Lang::Es => format!("Ctrl-Space: ver {more} más"),
-        };
-        message.push_str(" · ");
-        message.push_str(&hint);
-    }
-    message
+    let message = format!("⚡ local · {source}/{tool} · {ms} ms");
+    with_more_hint(message, more)
 }
 
 /// How many BM25 candidates the alternatives list starts with.

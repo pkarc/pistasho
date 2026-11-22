@@ -6,7 +6,7 @@
 
 Press `Ctrl-Space` in zsh, type what you want in plain words (English or Spanish), and the best command lands on your prompt. **It never runs by itself**: the final Enter is always yours. It searches [tldr](https://tldr.sh) pages, your own cheatsheet and your shell history, and everything stays on your machine.
 
-Status: **phase 2 done**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Optionally a local multilingual embedding model (e5-small, ~135 MB) is fused with BM25 so that a question can match by meaning (`search.embeddings`, downloaded by `pistasho update`). Installing a missing tool and risk warnings are in place; Laya and the LLM fallback come later. See [Roadmap](#roadmap).
+Status: **phase 2 done**. Questions are answered locally with BM25 over a full-text index, and a second `Ctrl-Space` shows alternatives when the answer is not the right one. Optionally a local multilingual embedding model (e5-small, ~135 MB) is fused with BM25 so that a question can match by meaning (`search.embeddings`, downloaded by `pistasho update`). Installing a missing tool and risk warnings are in place; An optional LLM fallback (Anthropic, off by default: set `llm.provider = "anthropic"` and an API key variable) answers when nothing local matches; it sends only your question, the OS name, the package manager and the shell name, never history, files or paths, and its command goes through the same checks and is never run. Laya comes later. See [Roadmap](#roadmap).
 
 ## Installation
 
@@ -59,7 +59,9 @@ pistasho doctor [programs…] [--table]                     # OS, package manage
 pistasho init zsh | tmux
 pistasho config
 pistasho ask how do I compress a folder                    # best command for a question (--json -n 5: candidates)
-pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] # measures searcher accuracy
+pistasho ask --llm rename all jpeg to jpg                   # ask the LLM directly (needs `[llm]`)
+pistasho cache list | clear [question] | save <question>   # the LLM's cached answers; save one as your own cheat
+pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] [--confidence] # measures searcher accuracy
 ```
 
 ### Searcher height
@@ -87,7 +89,7 @@ History is read from `history_file` in the configuration, `$HISTFILE`, or the us
 - [x] **Phase 1** · searcher: tldr (es + en), cheatsheet, history, placeholders, tmux popup, `eval`
 - [x] **Phase 2** · question mode (`Ctrl-Space`) without AI: SQLite FTS5 (BM25) + multilingual embeddings, binary verification, OS detection, install with confirmation, risk rules
 - [ ] **Phase 3** · Laya (ONNX) as an optional decision layer, only if it improves the `eval` measurements
-- [ ] **Phase 4** · LLM fallback (Anthropic / Ollama) with cache; only sends the question + OS + shell
+- [x] **Phase 4** · LLM fallback (Anthropic) with cache; asked only when nothing local is sure; only sends the question + OS + shell
 - [ ] **Phase 5** · packaging (AUR), demos recorded with `vhs`
 
 The detailed task list lives in [PLAN.md](PLAN.md) (written in Spanish, like the design decisions in `docs/adr/`).

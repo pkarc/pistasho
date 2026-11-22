@@ -6,7 +6,7 @@
 
 Presionas `Ctrl-Space` en zsh, escribes lo que quieres con tus palabras (en español o en inglés) y el mejor comando queda en tu prompt. **Nunca se ejecuta solo**: el Enter final siempre es tuyo. Busca entre las páginas de [tldr](https://tldr.sh), tu propio cheatsheet y tu historial, y todo se queda en tu máquina.
 
-Estado: **fase 2 terminada**. Las preguntas se responden en local con BM25 sobre un índice de texto completo, y un segundo `Ctrl-Space` muestra alternativas cuando la respuesta no es la correcta. Opcionalmente un modelo local de embeddings multilingüe (e5-small, ~135 MB) se fusiona con BM25 para que una pregunta coincida por significado (`search.embeddings`, lo descarga `pistasho update`). Instalar una herramienta que falta y los avisos de riesgo ya están; Laya y el LLM de respaldo vienen más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
+Estado: **fase 2 terminada**. Las preguntas se responden en local con BM25 sobre un índice de texto completo, y un segundo `Ctrl-Space` muestra alternativas cuando la respuesta no es la correcta. Opcionalmente un modelo local de embeddings multilingüe (e5-small, ~135 MB) se fusiona con BM25 para que una pregunta coincida por significado (`search.embeddings`, lo descarga `pistasho update`). Instalar una herramienta que falta y los avisos de riesgo ya están; Un LLM de respaldo opcional (Anthropic, apagado por defecto: pon `llm.provider = "anthropic"` y una variable con la API key) responde cuando nada local coincide; solo envía tu pregunta, el nombre del SO, el gestor de paquetes y el shell, nunca historial, archivos ni rutas, y su comando pasa por las mismas comprobaciones y nunca se ejecuta. Laya viene más adelante. Ver [Hoja de ruta](#hoja-de-ruta).
 
 ## Instalación
 
@@ -59,7 +59,9 @@ pistasho doctor [programas…] [--table]                      # SO, gestor de pa
 pistasho init zsh | tmux
 pistasho config
 pistasho ask cómo comprimo una carpeta                     # mejor comando para una pregunta (--json -n 5: candidatos)
-pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] # mide la precisión del buscador
+pistasho ask --llm renombrar todos los jpeg a jpg           # pregunta directo al LLM (necesita `[llm]`)
+pistasho cache list | clear [pregunta] | save <pregunta>   # respuestas del LLM en caché; guarda una como atajo propio
+pistasho eval eval/questions.toml [--mode fuzzy|bm25|hybrid] [--confidence] # mide la precisión del buscador
 ```
 
 ### Alto del buscador
@@ -87,7 +89,7 @@ El historial se lee de `history_file` en la configuración, `$HISTFILE` o los si
 - [x] **Fase 1** · buscador: tldr (es + en), cheatsheet, historial, marcadores, popup de tmux, `eval`
 - [x] **Fase 2** · modo pregunta (`Ctrl-Space`) sin IA: SQLite FTS5 (BM25) + embeddings multilingües, verificación de binarios, detección de OS, instalación con confirmación, reglas de riesgo
 - [ ] **Fase 3** · Laya (ONNX) como capa de decisión opcional, solo si mejora las mediciones de `eval`
-- [ ] **Fase 4** · LLM de respaldo (Anthropic / Ollama) con caché; solo envía pregunta + OS + shell
+- [x] **Fase 4** · LLM de respaldo (Anthropic) con caché; se pregunta solo cuando nada local es seguro; solo envía pregunta + OS + shell
 - [ ] **Fase 5** · empaquetado (AUR), demos grabadas con `vhs`
 
 La lista detallada de tareas está en [PLAN.md](PLAN.md) (en español, igual que las decisiones de diseño en `docs/adr/`).

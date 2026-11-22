@@ -25,7 +25,7 @@ La lista detallada de tareas, con tamaños y criterios de "lista cuando", está 
 
 ```
 src/
-  main.rs          clap: search, query, ask, update, add, init {zsh,tmux}, config, doctor, eval
+  main.rs          clap: search, query, ask, update, add, init {zsh,tmux}, config, doctor, eval, cache
   i18n.rs          idioma de la interfaz (en por defecto, es o auto): `tr("English", "Español")`, `PISTASHO_LANG`
   config.rs        ~/.config/pistasho/config.toml + asistente interactivo (`pistasho config`)
   db.rs            SQLite (`~/.local/share/pistasho/pistasho.db`): `entries`, `entries_fts` (FTS5, BM25, `remove_diacritics 2`), `meta`; `fts_query` con stemming ligero
@@ -33,6 +33,7 @@ src/
   system.rs        qué tiene la máquina: `which_in` (busca en PATH sin lanzar procesos), `binaries(cmd)` (los programas que ejecuta un comando: tokenizador con comillas, `$(...)`, tuberías, redirecciones, asignaciones, palabras clave y envoltorios `sudo`/`env`/`xargs`…), `missing_binaries`
   packages.rs      SO (`/etc/os-release`: `ID`, `ID_LIKE`) → gestor (apt, pacman, dnf, zypper); tabla curada `data/packages.toml` (comando → paquete por gestor, y programas que la distro instala con otro nombre); `exists` (pregunta al gestor); `adapt` (reescribe `fd` → `fdfind`); `plan_install` (el comando de instalación, sin ejecutarlo)
   alternatives.rs  `[a]`: tabla curada `data/alternatives.toml` (programa que falta → comando hecho con herramientas base, p. ej. `tree` → `find {{dir}} -maxdepth 2 | sort`); solo para comandos que ejecutan ese único programa y si lo que ejecuta la alternativa está instalado
+  llm.rs           respaldo con LLM (fase 4): trait `Generate`, `Anthropic` por HTTP con `ureq` (no hay SDK oficial de Rust; salida estructurada con `output_config.format`, no `tool_choice` forzado porque los modelos nuevos lo rechazan), `Suggestion{command,binaries,package,risk,explanation}`, `ANTHROPIC_BASE_URL` para proxys y para las pruebas
   embed.rs         el modelo `multilingual-e5-small` int8 en ONNX Runtime (`ort`): descarga en `update` con sha256 fijado a una revisión (`models/multilingual-e5-small/`), `Engine` (tokenizador y sesión se cargan en paralelo, sin optimización de grafo), estado global `init` / `prefetch` / `with_engine` / `question_vector`, `index_missing` (embebe lo que no tiene vector, por lotes de 32 ordenados por largo, guardando cada lote)
   (data/synonyms.toml  palabras en español que tldr dice distinto (carpeta → directorio / folder); solo amplían la consulta de BM25, `ask::expand`)
   semantic.rs      la parte pura: texto que representa a una entrada (`herramienta. descripción. alt[:150]`), clave del vector (FNV-1a del texto), vectores `i8` (×127), `VectorIndex::top_k` por fuerza bruta, `rrf`
@@ -53,6 +54,8 @@ examples/cheats.toml
 ```
 
 Detalles ya resueltos que conviene no romper:
+- LLM (4.1): apagado por defecto (`llm.provider = "none"`); sin proveedor no sale nada de la máquina. Solo se envían la pregunta, el nombre del SO, el gestor y el nombre del shell (`llm::Machine`), nunca historial, archivos ni rutas (hay un test y un caso e2e que lo comprueban). Hoy se llama cuando la búsqueda local no encuentra nada (`llm_fallback` en `ask_on_prompt` y en `ask` plano) o con `ask --llm`; **también cuando la mejor coincidencia es dudosa** (`llm.when = "unsure"`, puntaje fusionado < `llm.threshold`, 0.20 por defecto: `llm::wanted`; sin embeddings solo cuenta "nada coincide"). Las respuestas se guardan en la tabla `llm_cache` (clave `ask::normalize_question`; no se borra con `update`) y una pregunta repetida sale como `⚡ local · cache` sin pedir nada; `pistasho cache list | clear | save`. Si el LLM falla y hay un candidato local, se muestra el local con la nota `✗ llm: …`. El comando del LLM pasa por `finalize` (binarios, riesgo, caja roja) como cualquier otro y nunca se ejecuta; su `risk` solo puede añadir un aviso (`⚠ llm: …`). La key sale de la variable que diga `llm.api_key_env`. El mensaje es `✦ llm · modelo · 1.1 s`. Los fallos (sin key, 401, 429, red, formato) salen como `✗ llm: …`.
+- **`scripts/e2e.py` usa por defecto `~/.cargo/bin/pistasho`, el binario instalado, no el recién compilado**: correrlo con `PISTASHO_BIN=$PWD/target/release/pistasho` (en la sesión de la 2.9 / 3.0 se corrió contra uno viejo sin darnos cuenta). El caso `llm` usa un servidor falso en localhost (`ANTHROPIC_BASE_URL`); ningún test llama al modelo de verdad.
 - Embeddings (2.9): `ask::ask` fusiona por RRF ponderado (pesos bm25:meaning = 1:2, k=10, elegidos con `eval --fusion`) el ranking de BM25 (ya con los boost de mío / historial) con el de significado (los 200 vectores más cercanos, deduplicados por forma). **Todo falla en suave**: sin modelo, sin vectores, con `search.embeddings = false` o `PISTASHO_EMBEDDINGS=0`, `ask` es BM25 puro. Los vectores se guardan por clave de texto (tabla `vectors`, `entries.vkey`), así que `update` solo embebe lo nuevo o editado (el primero tarda ~5 min y se puede interrumpir: reanuda). El historial no se embebe (no tiene descripción y es privado). Tus atajos nuevos se embeben al vuelo en `ask` si faltan ≤ 200. Cargar el modelo cuesta ~0.5 s: `main` llama `embed::prefetch()` al empezar `ask` para que cargue mientras el usuario escribe. Si cambias el modelo o cómo se arma el texto, sube `embed::MODEL_ID` (borra los vectores). `eval --mode hybrid` mide la fusión. `ask` pone un solo ejemplo de tldr por herramienta antes de repetir (`per_tool`; tus atajos e historial nunca se retrasan), amplía la consulta de BM25 con `data/synonyms.toml` y ignora los comandos que empiezan por `<` (teclas dentro de `fdisk`, no comandos).
 - tldr se descarga de `https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip` (todos los idiomas). `page_path` acepta prefijos de carpeta.
 - Las traducciones se unen por comando normalizado: `desc` sale del primer idioma de `languages` y las demás descripciones más el resumen de la página van a `alt`, que se usa solo para buscar.
@@ -117,7 +120,7 @@ El detalle por tareas está en `PLAN.md`. Resumen:
 - El usuario propone un programa opt-in de compartir datos de uso para entrenar y corregir un modelo (detalle y preguntas abiertas en `PLAN.md`, sección "Visión a largo plazo"). **No construir nada de esto ni enviar datos antes de que el usuario lo converse al terminar las demás fases.** Choca con el principio 3 tal como está escrito.
 
 ### Fase 4: LLM de respaldo
-- Interfaz `Generate`: Anthropic (por defecto `claude-haiku-5-5`, key desde la variable de `llm.api_key_env`) y Ollama (`llm.endpoint`, `llm.model`).
+- Interfaz `Generate`: Anthropic (por defecto `claude-haiku-4-5`: el id `claude-haiku-5-5` que figuraba antes no existe, key desde la variable de `llm.api_key_env`) (solo proveedores externos en línea: el usuario descartó Ollama el 2026-11-22 porque exigir un modelo local con tanto consumo de recursos solo por esta herramienta no tiene sentido; una vía local podría volver más adelante si es liviana).
 - Respuesta en JSON estructurado: `{command, binaries[], package?, risk, explanation}`. Validar siempre con el paso de binarios y riesgo de la fase 2.
 - Caché en SQLite; la segunda vez que se hace la misma pregunta va por la vía local (`⚡`).
 - Solo se envían pregunta + OS + shell.
@@ -151,7 +154,7 @@ tmux = "g"      # prefix + g
 [decide]        # fase 3: none | laya | laya-serve | jev
 provider = "none"
 
-[llm]           # fase 4: none | anthropic | ollama
+[llm]           # fase 4: none | anthropic (solo proveedores externos en línea)
 provider = "none"
 ```
 

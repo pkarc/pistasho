@@ -144,11 +144,16 @@ pub struct Decide {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Llm {
-    /// `none`, `anthropic` or `ollama`.
+    /// `none` or `anthropic`. Only hosted providers: a local model would cost the user more
+    /// resources than this tool is worth.
     pub provider: String,
     pub model: Option<String>,
-    pub endpoint: Option<String>,
     pub api_key_env: Option<String>,
+    /// When to ask it: `unsure` (nothing local matches or the best match is shaky) or `nomatch`
+    /// (only when nothing matches).
+    pub when: String,
+    /// With `when = "unsure"`: ask when the best local score is under this (see `eval --confidence`).
+    pub threshold: Option<f64>,
 }
 
 impl Default for Config {
@@ -195,8 +200,9 @@ impl Default for Llm {
         Self {
             provider: "none".into(),
             model: None,
-            endpoint: None,
             api_key_env: None,
+            when: "unsure".into(),
+            threshold: None,
         }
     }
 }
@@ -496,28 +502,46 @@ pub fn wizard() -> Result<(Config, bool)> {
     cfg.llm.provider = choose(
         &mut stdin,
         tr(
-            "LLM fallback (generates commands that are not available locally; phase 4):",
-            "LLM de respaldo (genera comandos que no están en local; fase 4):",
+            "LLM fallback, when nothing local matches. It sends only your question, the OS name, the package manager and the shell name; never history, files or paths:",
+            "LLM de respaldo, cuando nada local coincide. Solo envía tu pregunta, el nombre del SO, el gestor de paquetes y el shell; nunca historial, archivos ni rutas:",
         ),
         &[
             ("none", tr("no LLM, fully offline", "sin LLM, todo offline")),
             ("anthropic", tr("Anthropic API", "API de Anthropic")),
-            (
-                "ollama",
-                tr("Ollama, local or on your network", "Ollama local o en tu red"),
-            ),
         ],
         &cfg.llm.provider.clone(),
     )?;
-    match cfg.llm.provider.as_str() {
-        "anthropic" => {
-            let m = cfg.llm.model.clone().unwrap_or_else(|| "claude-haiku-5-5".into());
+    if cfg.llm.provider == "anthropic" {
+        cfg.llm.when = choose(
+            &mut stdin,
+            tr("When to ask the LLM:", "Cuándo preguntar al LLM:"),
+            &[
+                (
+                    "unsure",
+                    tr(
+                        "when nothing matches or the best match is shaky",
+                        "cuando nada coincide o la mejor coincidencia es dudosa",
+                    ),
+                ),
+                (
+                    "nomatch",
+                    tr("only when nothing matches", "solo cuando nada coincide"),
+                ),
+            ],
+            &cfg.llm.when.clone(),
+        )?;
+        {
+            let m = cfg
+                .llm
+                .model
+                .clone()
+                .unwrap_or_else(|| crate::llm::DEFAULT_MODEL.into());
             cfg.llm.model = opt(ask(&mut stdin, tr("Model", "Modelo"), &m)?);
             let k = cfg
                 .llm
                 .api_key_env
                 .clone()
-                .unwrap_or_else(|| "ANTHROPIC_API_KEY".into());
+                .unwrap_or_else(|| crate::llm::DEFAULT_KEY_ENV.into());
             cfg.llm.api_key_env = opt(ask(
                 &mut stdin,
                 tr(
@@ -527,17 +551,6 @@ pub fn wizard() -> Result<(Config, bool)> {
                 &k,
             )?);
         }
-        "ollama" => {
-            let e = cfg
-                .llm
-                .endpoint
-                .clone()
-                .unwrap_or_else(|| "http://localhost:11434".into());
-            cfg.llm.endpoint = opt(ask(&mut stdin, tr("Ollama URL", "URL de Ollama"), &e)?);
-            let m = cfg.llm.model.clone().unwrap_or_else(|| "qwen2.5-coder:7b".into());
-            cfg.llm.model = opt(ask(&mut stdin, tr("Model", "Modelo"), &m)?);
-        }
-        _ => {}
     }
 
     let path = cfg.save()?;

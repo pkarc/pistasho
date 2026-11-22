@@ -42,6 +42,8 @@ pub struct Report {
     pub top3: usize,
     /// Questions with a correct tool among the 10 best: the ceiling for anything that re-orders.
     pub recall10: usize,
+    /// `(score of the best candidate, was it right)` per question; no candidate counts as 0.0.
+    pub confidence: Vec<(f64, bool)>,
     /// `(question, tools that came out on top)` for the questions with no hit in the top 3.
     pub misses: Vec<(String, String)>,
 }
@@ -112,7 +114,9 @@ pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tun
     }
 
     let (mut top1, mut top3, mut recall10, mut misses) = (0, 0, 0, Vec::new());
+    let mut confidence = Vec::new();
     for q in &questions {
+        let mut best_score = 0.0;
         let tools: Vec<String> = match fuzzy.as_mut() {
             Some(searcher) => searcher
                 .rank(entries, &q.question, 10)
@@ -123,14 +127,15 @@ pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tun
                 let qvec = (mode == Mode::Hybrid)
                     .then(|| embed::question_vector(&q.question))
                     .flatten();
-                ask::ask_with(db, &q.question, 10, &params, qvec.as_deref())?
-                    .into_iter()
-                    .map(|c| c.entry.tool)
-                    .collect()
+                let found = ask::ask_with(db, &q.question, 10, &params, qvec.as_deref())?;
+                best_score = found.first().map_or(0.0, |c| c.score);
+                found.into_iter().map(|c| c.entry.tool).collect()
             }
         };
         let hit = |t: &String| is_correct(t, &q.tools);
-        if tools.first().is_some_and(hit) {
+        let right = tools.first().is_some_and(hit);
+        confidence.push((best_score, right));
+        if right {
             top1 += 1;
         }
         if tools.iter().take(3).any(hit) {
@@ -148,16 +153,56 @@ pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tun
         top1,
         top3,
         recall10,
+        confidence,
         misses,
     })
 }
 
-pub fn run(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tuning) -> Result<()> {
+/// How often the best candidate is right when its score is at least each threshold, and how much
+/// of the questions that covers: what the LLM threshold is chosen from.
+fn print_confidence(confidence: &[(f64, bool)]) {
+    println!(
+        "\n{:>10}  {:>9}  {:>14}  {:>14}",
+        "score >=", "asked LLM", "right (kept)", "right (asked)"
+    );
+    let n = confidence.len().max(1) as f64;
+    let pct = |group: &[&(f64, bool)]| {
+        if group.is_empty() {
+            "-".to_string()
+        } else {
+            format!(
+                "{:.0}%",
+                group.iter().filter(|(_, ok)| *ok).count() as f64 / group.len() as f64 * 100.0
+            )
+        }
+    };
+    for t in [0.0, 0.10, 0.15, 0.18, 0.20, 0.22, 0.25, 0.30] {
+        let (kept, asked): (Vec<_>, Vec<_>) = confidence.iter().partition(|(s, _)| *s >= t && *s > 0.0);
+        println!(
+            "{t:>10.2}  {:>8.0}%  {:>14}  {:>14}",
+            asked.len() as f64 / n * 100.0,
+            pct(&kept),
+            pct(&asked)
+        );
+    }
+}
+
+pub fn run(
+    path: &Path,
+    mode: Mode,
+    entries: &[Entry],
+    db: &Db,
+    tuning: Tuning,
+    show_confidence: bool,
+) -> Result<()> {
     let report = evaluate(path, mode, entries, db, tuning)?;
     println!("{} {}", tr("questions:", "preguntas:"), report.questions);
     println!("top-1:     {:.0}%", report.top1_pct());
     println!("top-3:     {:.0}%", report.top3_pct());
     println!("recall@10: {:.0}%", report.recall10_pct());
+    if show_confidence {
+        print_confidence(&report.confidence);
+    }
     if !report.misses.is_empty() {
         println!(
             "\n{}",

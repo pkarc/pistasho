@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS vectors (
     key INTEGER PRIMARY KEY,
     v   BLOB NOT NULL
 );
+-- answers of the LLM by normalised question. Not dropped with the rest on a schema change:
+-- they cost money to get and are not derived from anything else.
+CREATE TABLE IF NOT EXISTS llm_cache (
+    question    TEXT PRIMARY KEY,
+    command     TEXT NOT NULL,
+    binaries    TEXT NOT NULL,
+    package     TEXT NOT NULL,
+    risk        TEXT NOT NULL,
+    explanation TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    created     INTEGER NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     description, alt, tool, cmd_words,
     content = 'entries', content_rowid = 'id',
@@ -67,6 +79,18 @@ DROP TABLE IF EXISTS meta;
 ";
 
 const COLUMNS: &str = "e.cmd, e.description, e.alt, e.tool, e.source, e.origin, e.uses";
+
+/// A stored answer of the LLM.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CachedAnswer {
+    pub question: String,
+    pub command: String,
+    pub binaries: Vec<String>,
+    pub package: String,
+    pub risk: String,
+    pub explanation: String,
+    pub model: String,
+}
 
 pub struct Db {
     conn: Connection,
@@ -194,6 +218,57 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    pub fn cache_get(&self, question: &str) -> Result<Option<CachedAnswer>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT question, command, binaries, package, risk, explanation, model FROM llm_cache WHERE question = ?1",
+                [question],
+                row_to_cached,
+            )
+            .optional()?)
+    }
+
+    pub fn cache_put(&self, answer: &CachedAnswer) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        self.conn.execute(
+            "INSERT OR REPLACE INTO llm_cache(question, command, binaries, package, risk, explanation, model, created)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                answer.question,
+                answer.command,
+                serde_json::to_string(&answer.binaries)?,
+                answer.package,
+                answer.risk,
+                answer.explanation,
+                answer.model,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Newest first.
+    pub fn cache_list(&self) -> Result<Vec<CachedAnswer>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT question, command, binaries, package, risk, explanation, model FROM llm_cache ORDER BY created DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_cached)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Forgets every cached answer (or one, by normalised question); returns how many.
+    pub fn cache_clear(&self, question: Option<&str>) -> Result<usize> {
+        Ok(match question {
+            Some(q) => self
+                .conn
+                .execute("DELETE FROM llm_cache WHERE question = ?1", [q])?,
+            None => self.conn.execute("DELETE FROM llm_cache", [])?,
+        })
+    }
+
     /// Passages (and their keys) of the entries that have no vector yet, longest last so batches
     /// of similar length waste little padding.
     pub fn missing_vectors(&self) -> Result<Vec<(i64, String)>> {
@@ -314,6 +389,19 @@ impl Db {
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
+}
+
+fn row_to_cached(r: &rusqlite::Row) -> rusqlite::Result<CachedAnswer> {
+    let binaries: String = r.get(2)?;
+    Ok(CachedAnswer {
+        question: r.get(0)?,
+        command: r.get(1)?,
+        binaries: serde_json::from_str(&binaries).unwrap_or_default(),
+        package: r.get(3)?,
+        risk: r.get(4)?,
+        explanation: r.get(5)?,
+        model: r.get(6)?,
+    })
 }
 
 fn row_to_entry(r: &rusqlite::Row) -> rusqlite::Result<Entry> {

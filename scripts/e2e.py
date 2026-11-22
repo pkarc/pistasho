@@ -367,7 +367,155 @@ def scenario_popup():
     t.stop()
 
 
-SCENARIOS = [scenario_question, scenario_install, scenario_alternative, scenario_risk, scenario_popup]
+class MockLLM:
+    """A stand-in for the Messages API on localhost: records what it was sent, answers with a fixed
+    suggestion (or an error status). No real model is ever called."""
+
+    def __init__(self, command=None, status=200):
+        import http.server
+        import json
+        import threading
+
+        outer = self
+        self.requests = []
+        suggestion = {"command": command or "ls", "binaries": ["mv"], "package": "", "risk": "caution",
+                      "explanation": "Renombra los archivos."}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["content-length"]))
+                outer.requests.append((dict(self.headers), json.loads(body)))
+                if status != 200:
+                    payload = {"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}}
+                else:
+                    payload = {"stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(suggestion)}]}
+                data = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def stop(self):
+        self.server.shutdown()
+
+
+def scenario_llm():
+    print("LLM fallback (against a local stand-in)")
+    cfg = f"{ROOT}/cfg/pistasho/config.toml"
+    saved = open(cfg).read()
+    command = 'for f in *.jpeg; do mv "$f" "${f%.jpeg}.jpg"; done'
+    for status in (200, 401):
+        mock = MockLLM(command, status)
+        open(cfg, "w").write(saved + '[llm]\nprovider = "anthropic"\n')
+        ENV.update(ANTHROPIC_BASE_URL=mock.url, ANTHROPIC_API_KEY="sk-ant-e2e-fake")
+        t = Tmux("llm")
+        try:
+            zsh_session(t)
+            ask(t, "renombrar todos los jpeg a jpg", 2.0)
+            if status == 200:
+                check("the model's command lands on the prompt", "jpeg" in t.text() and "PROMPT> for f in" in t.text())
+                check("the line says it came from the LLM", "✦ llm" in t.text())
+                check("the risk the model reported is shown", "caution" in t.text())
+                headers, body = mock.requests[0]
+                t.keys("C-u")
+                ask(t, "Renombrar TODOS los jpeg a jpg!", 1.5)
+                check("the same question again comes from the cache", "⚡ local · cache" in t.text())
+                check("and makes no second request", len(mock.requests) == 1)
+                cli = subprocess.run([BIN, "cache", "list"], capture_output=True, text=True, env=dict(os.environ, **ENV))
+                check("cache list shows the command", "jpeg" in cli.stdout and "claude-haiku-4-5" in cli.stdout)
+                cheats_path = f"{ROOT}/cfg/pistasho/cheats.toml"
+                cheats_before = open(cheats_path).read()
+                save_run = subprocess.run([BIN, "cache", "save", "renombrar todos los jpeg a jpg"], capture_output=True, text=True, env=dict(os.environ, **ENV))
+                check("cache save adds it to cheats.toml", save_run.returncode == 0 and "jpeg" in open(f"{ROOT}/cfg/pistasho/cheats.toml").read())
+                open(cheats_path, "w").write(cheats_before)  # the saved cheat would answer the next scenarios locally
+                subprocess.run([BIN, "cache", "clear"], capture_output=True, env=dict(os.environ, **ENV))
+                check("cache clear empties it", "nothing cached" in subprocess.run([BIN, "cache", "list"], capture_output=True, text=True, env=dict(os.environ, **ENV)).stderr)
+                check("the key travels in x-api-key", headers.get("x-api-key") == "sk-ant-e2e-fake")
+                check("only the question is sent as the user turn", body["messages"] == [{"role": "user", "content": "renombrar todos los jpeg a jpg"}])
+                check("nothing from the machine's files or history is in the request", "/home/" not in str(body) and ROOT not in str(body))
+                t.keys("C-u")
+            else:
+                check("a rejected key is reported, not swallowed", "✗ llm" in t.text() and "rejected" in t.text())
+                check("and nothing lands on the prompt", t.lines()[-1].rstrip().endswith("PROMPT>") or "PROMPT> for" not in t.text())
+        finally:
+            t.stop()
+            mock.stop()
+            open(cfg, "w").write(saved)
+            for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"):
+                ENV.pop(k, None)
+    # what the model suggests gets the same treatment as anything else: install offer, red box
+    nonsense = "hazme una cosa que nadie ha preguntado jamas"
+    for n, (what, command) in enumerate((("a program that is missing", "ncdu /var"), ("a destructive command", "sudo mkfs.ext4 /dev/sdb1"))):
+        mock = MockLLM(command)
+        open(cfg, "w").write(saved + '[llm]\nprovider = "anthropic"\n')
+        ENV.update(ANTHROPIC_BASE_URL=mock.url, ANTHROPIC_API_KEY="sk-ant-e2e-fake")
+        reset()
+        t = Tmux("llm-checks")
+        try:
+            zsh_session(t)
+            ask(t, f"{nonsense} {n}", 2.0)  # a different question each time: the answers are cached
+            if "ncdu" in command:
+                check(f"{what}: the install box is offered", "suggested installation" in t.text())
+                t.keys("y", wait=2.5)
+                check(f"{what}: y installs it", os.path.exists(f"{STUB}/ncdu"))
+                check(f"{what}: and the command lands on the prompt", "PROMPT> ncdu /var" in t.text())
+            else:
+                check(f"{what}: the red box appears", "destructive command" in t.text())
+                t.keys("Enter", wait=1.2)
+                check(f"{what}: it stays on the prompt, marked, not run", "PROMPT> sudo mkfs.ext4 /dev/sdb1" in t.text() and "⚠ destructive" in t.text())
+        finally:
+            t.stop()
+            mock.stop()
+            open(cfg, "w").write(saved)
+            for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"):
+                ENV.pop(k, None)
+    # the tmux popup: the model's command goes straight to the pane (it is not in the local list)
+    mock = MockLLM("df -h /var")
+    open(cfg, "w").write(saved + '[llm]\nprovider = "anthropic"\n')
+    ENV.update(ANTHROPIC_BASE_URL=mock.url, ANTHROPIC_API_KEY="sk-ant-e2e-fake")
+    conf = f"{ROOT}/tmux-llm.conf"
+    subprocess.run([BIN, "init", "tmux"], stdout=open(conf, "w"), env=dict(os.environ, **ENV))
+    t = Tmux("llm-popup")
+    try:
+        t.start(conf=conf, shell="zsh -f")
+        t.type('PS1="PROMPT> "; clear\r', wait=0.8)
+        t.raw.clear()
+        t.send(b"\x02g", 1.8)
+        t.type(nonsense + " popup")
+        t.send(b"\r", 2.5)
+        check("popup: the model's command reaches the pane", "PROMPT> df -h /var" in t.text())
+        check("popup: without the local list in between", "other options" not in t.popup_text())
+    finally:
+        t.stop()
+        mock.stop()
+        open(cfg, "w").write(saved)
+        for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"):
+            ENV.pop(k, None)
+    # with the provider off (the default) nothing is asked and nothing is sent
+    mock = MockLLM(command)
+    ENV.update(ANTHROPIC_BASE_URL=mock.url, ANTHROPIC_API_KEY="sk-ant-e2e-fake")
+    t = Tmux("llm-off")
+    try:
+        zsh_session(t)
+        ask(t, "renombrar todos los jpeg a jpg", 1.5)
+        check("with the LLM off, no request is made", not mock.requests)
+        check("and it says there is no match", "no match" in t.text())
+    finally:
+        t.stop()
+        mock.stop()
+        for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"):
+            ENV.pop(k, None)
+
+
+SCENARIOS = [scenario_question, scenario_install, scenario_alternative, scenario_risk, scenario_popup, scenario_llm]
 
 
 def main():

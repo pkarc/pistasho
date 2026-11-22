@@ -75,6 +75,9 @@ pub struct Candidate {
     /// Programs this machine has under another name, put right when the command is used:
     /// `("fd", "fdfind")`. They do not count as missing.
     pub renames: Vec<(String, String)>,
+    /// `score` is a fused rank score (BM25 and meaning), comparable between questions; otherwise it
+    /// is a raw BM25 score, which is not.
+    pub fused: bool,
 }
 
 /// Words that say nothing about which command is wanted, Spanish and English. Compared without
@@ -160,6 +163,25 @@ fn boost(e: &Entry, p: &Params) -> f64 {
     }
 }
 
+/// A question as a cache key: lowercase words without accents, single-spaced, no punctuation.
+pub fn normalize_question(question: &str) -> String {
+    db::words(question)
+        .iter()
+        .map(|w| fold(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether the best local answer is too shaky to show without asking the LLM: nothing found, or a
+/// fused score under `threshold`. A raw BM25 score says nothing about confidence on its own, so
+/// without the model only "nothing found" counts.
+pub fn is_unsure(best: Option<&Candidate>, threshold: f64) -> bool {
+    match best {
+        None => true,
+        Some(c) => c.fused && c.score < threshold,
+    }
+}
+
 /// The `limit` best candidates for a question, best first.
 pub fn ask(db: &Db, question: &str, limit: usize) -> Result<Vec<Candidate>> {
     let qvec = embed::question_vector(question);
@@ -209,6 +231,7 @@ fn by_meaning(db: &Db, qvec: &[f32]) -> Result<Vec<Candidate>> {
             score: 0.0,
             missing: Vec::new(),
             renames: Vec::new(),
+            fused: false,
         })
         .collect())
 }
@@ -239,6 +262,7 @@ pub fn ask_with(
             entry,
             missing: Vec::new(),
             renames: Vec::new(),
+            fused: false,
         })
         .collect();
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -303,6 +327,7 @@ fn fuse(bm25: Vec<Candidate>, meaning: Vec<Candidate>, fusion: &Fusion) -> Vec<C
         .filter_map(|(key, score)| {
             let mut c = by_key.remove(&key)?;
             c.score = score;
+            c.fused = true;
             // the same example in two languages is one candidate
             seen.insert(placeholders::shape(&c.entry.cmd)).then_some(c)
         })
@@ -393,6 +418,7 @@ mod tests {
             score: 0.0,
             missing: Vec::new(),
             renames: Vec::new(),
+            fused: false,
         }
     }
 
@@ -448,6 +474,34 @@ mod tests {
         assert!(ask_with(&db, "crear una carpeta", 5, &off, None)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn questions_that_differ_only_in_form_share_a_cache_key() {
+        assert_eq!(
+            normalize_question("¿Cómo RENOMBRAR   los .jpeg a .jpg?"),
+            "como renombrar los jpeg a jpg"
+        );
+        assert_eq!(
+            normalize_question("Contraseña"),
+            normalize_question("contrasena!")
+        );
+        assert_ne!(
+            normalize_question("listar archivos"),
+            normalize_question("borrar archivos")
+        );
+    }
+
+    #[test]
+    fn only_a_fused_score_can_make_a_match_unsure() {
+        let mut c = cand("ls", Source::Tldr);
+        assert!(is_unsure(None, 0.1));
+        c.score = 0.05;
+        assert!(!is_unsure(Some(&c), 0.1), "a raw BM25 score is not a confidence");
+        c.fused = true;
+        assert!(is_unsure(Some(&c), 0.1));
+        c.score = 0.2;
+        assert!(!is_unsure(Some(&c), 0.1));
     }
 
     #[test]

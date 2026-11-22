@@ -191,3 +191,18 @@ Ninguno mejora de forma útil y todos cuestan mucho más que el presupuesto (~15
 
 Comandos cotidianos con descripciones muy genéricas (`rm`, `mkdir`, `pwd`, `ping`, `ssh-keygen`, `hostname`) pierden contra herramientas raras que casualmente comparten una palabra (`gdown`, `b2`, `nxc-ssh`). Es un problema de modelo de significado (e5-small es pequeño) o de prioridad de herramientas comunes, no de orden entre los 10 primeros.
 
+## Tarea 4.3 · Cuándo preguntar al LLM (2026-11-22)
+
+`pistasho eval --confidence` imprime, por umbral de puntaje fusionado del mejor candidato, qué parte de las preguntas se mandaría al LLM y cuánto acierta el candidato local en cada grupo (híbrido, regla de subcomandos):
+
+| Umbral | Se pregunta (originales / sintéticas) | Local acierta, lo que se queda | Local acierta, lo que se pregunta |
+|---|---|---|---|
+| 0.18 | 0% / 0% | 51% / 47% | n/a |
+| **0.20** | **9% / 15%** | 55% / 50% | **11% / 26%** |
+| 0.22 | 21% / 29% | 61% / 54% | 14% / 28% |
+| 0.25 | 48% / 57% | 62% / 57% | 40% / 39% |
+
+El puntaje fusionado separa mal: aun lo "seguro" acierta solo 55–62%, porque muchos "fallos" son herramientas válidas que el banco no acepta (`fclones` por `fdupes`, `halt` por `shutdown`). Pero el extremo bajo sí es fiable: debajo de 0.20 el candidato local casi nunca es el correcto (11–26%). Se eligió **0.20** (se pregunta en 1 de cada 7–11 preguntas) y es configurable (`llm.threshold`). Con 0.22 se preguntaría a casi un cuarto de las preguntas, con más latencia y coste.
+
+**Lo que no se midió:** cuánto acierta el LLM en ese grupo (cada medición gasta una clave de pago; las pruebas usan un servidor falso). Queda para ver en uso real, con `pistasho cache list` para revisar lo que respondió.
+
