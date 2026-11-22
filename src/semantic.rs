@@ -92,17 +92,18 @@ impl VectorIndex {
 
 /// Reciprocal rank fusion: each ranking gives `1 / (k + rank)` to what it lists, and what
 /// several rankings agree on rises. Rank-based, so BM25 scores and cosines never have to be
-/// put on one scale. Returns `(item, fused score)` best first.
-pub fn rrf<K: std::hash::Hash + Eq + Clone>(rankings: &[Vec<K>], k: f64) -> Vec<(K, f64)> {
+/// put on one scale. Each ranking has a weight (1.0 = plain RRF). Returns `(item, fused score)`
+/// best first.
+pub fn rrf<K: std::hash::Hash + Eq + Clone>(rankings: &[(Vec<K>, f64)], k: f64) -> Vec<(K, f64)> {
     let mut score: std::collections::HashMap<K, f64> = std::collections::HashMap::new();
     let mut order: Vec<K> = Vec::new();
-    for ranking in rankings {
+    for (ranking, weight) in rankings {
         for (pos, item) in ranking.iter().enumerate() {
             let s = score.entry(item.clone()).or_insert_with(|| {
                 order.push(item.clone());
                 0.0
             });
-            *s += 1.0 / (k + pos as f64 + 1.0);
+            *s += weight / (k + pos as f64 + 1.0);
         }
     }
     let mut out: Vec<(K, f64)> = order
@@ -165,7 +166,7 @@ mod tests {
 
     #[test]
     fn rrf_rewards_agreement() {
-        let fused = rrf(&[vec!["a", "b", "c"], vec!["b", "c", "d"]], 60.0);
+        let fused = rrf(&[(vec!["a", "b", "c"], 1.0), (vec!["b", "c", "d"], 1.0)], 60.0);
         let order: Vec<_> = fused.iter().map(|(k, _)| *k).collect();
         // b and c are listed by both rankings, a and d by one
         assert_eq!(order, vec!["b", "c", "a", "d"]);

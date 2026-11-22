@@ -3,7 +3,7 @@
 //! Three rankers can be compared on the same questions: the fuzzy searcher of phase 1, the BM25
 //! search, and BM25 fused with embeddings (what `pistasho ask` does when the model is there).
 
-use crate::ask::{self, Params};
+use crate::ask::{self, Fusion, Params};
 use crate::db::{Db, Weights};
 use crate::embed;
 use crate::i18n::tr;
@@ -40,6 +40,8 @@ pub struct Report {
     pub questions: usize,
     pub top1: usize,
     pub top3: usize,
+    /// Questions with a correct tool among the 10 best: the ceiling for anything that re-orders.
+    pub recall10: usize,
     /// `(question, tools that came out on top)` for the questions with no hit in the top 3.
     pub misses: Vec<(String, String)>,
 }
@@ -47,6 +49,10 @@ pub struct Report {
 impl Report {
     pub fn top1_pct(&self) -> f64 {
         self.top1 as f64 / self.questions.max(1) as f64 * 100.0
+    }
+
+    pub fn recall10_pct(&self) -> f64 {
+        self.recall10 as f64 / self.questions.max(1) as f64 * 100.0
     }
 
     pub fn top3_pct(&self) -> f64 {
@@ -60,15 +66,29 @@ fn read_questions(path: &Path) -> Result<Vec<Question>> {
     Ok(toml::from_str::<EvalFile>(&text)?.q)
 }
 
-/// Runs every question through the chosen ranker. `weights` overrides the BM25 column weights
-/// (used to tune them); it is ignored in fuzzy mode.
-pub fn evaluate(
-    path: &Path,
-    mode: Mode,
-    entries: &[Entry],
-    db: &Db,
-    weights: Option<Weights>,
-) -> Result<Report> {
+/// A tool answers a question if it is the wanted one or one of its subcommand pages: `ip-address`
+/// is `ip`, `git-diff` is `git`.
+fn is_correct(tool: &str, wanted: &[String]) -> bool {
+    wanted.iter().any(|w| {
+        tool == w
+            || tool
+                .strip_prefix(w.as_str())
+                .is_some_and(|rest| rest.starts_with('-'))
+    })
+}
+
+/// Knobs for tuning, all optional.
+#[derive(Default, Clone, Copy)]
+pub struct Tuning {
+    /// BM25 column weights (ignored in fuzzy mode).
+    pub weights: Option<Weights>,
+    pub fusion: Option<Fusion>,
+    pub per_tool: Option<usize>,
+    pub synonyms: Option<bool>,
+}
+
+/// Runs every question through the chosen ranker.
+pub fn evaluate(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tuning) -> Result<Report> {
     let questions = read_questions(path)?;
     let mut fuzzy = (mode == Mode::Fuzzy).then(|| Searcher::new(entries));
     if mode == Mode::Hybrid && !embed::enabled() {
@@ -78,15 +98,24 @@ pub fn evaluate(
         ));
     }
     let mut params = Params { ..ask::PARAMS };
-    if let Some(w) = weights {
+    if let Some(w) = tuning.weights {
         params.weights = w;
     }
+    if let Some(f) = tuning.fusion {
+        params.fusion = f;
+    }
+    if let Some(s) = tuning.synonyms {
+        params.synonyms = s;
+    }
+    if let Some(n) = tuning.per_tool {
+        params.per_tool = n;
+    }
 
-    let (mut top1, mut top3, mut misses) = (0, 0, Vec::new());
+    let (mut top1, mut top3, mut recall10, mut misses) = (0, 0, 0, Vec::new());
     for q in &questions {
         let tools: Vec<String> = match fuzzy.as_mut() {
             Some(searcher) => searcher
-                .rank(entries, &q.question, 3)
+                .rank(entries, &q.question, 10)
                 .into_iter()
                 .map(|i| entries[i].tool.clone())
                 .collect(),
@@ -94,35 +123,41 @@ pub fn evaluate(
                 let qvec = (mode == Mode::Hybrid)
                     .then(|| embed::question_vector(&q.question))
                     .flatten();
-                ask::ask_with(db, &q.question, 3, &params, qvec.as_deref())?
+                ask::ask_with(db, &q.question, 10, &params, qvec.as_deref())?
                     .into_iter()
                     .map(|c| c.entry.tool)
                     .collect()
             }
         };
-        let hit = |t: &String| q.tools.contains(t);
+        let hit = |t: &String| is_correct(t, &q.tools);
         if tools.first().is_some_and(hit) {
             top1 += 1;
         }
-        if tools.iter().any(hit) {
+        if tools.iter().take(3).any(hit) {
             top3 += 1;
         } else {
-            misses.push((q.question.clone(), tools.join(", ")));
+            let shown: Vec<_> = tools.iter().take(3).cloned().collect();
+            misses.push((q.question.clone(), shown.join(", ")));
+        }
+        if tools.iter().any(hit) {
+            recall10 += 1;
         }
     }
     Ok(Report {
         questions: questions.len(),
         top1,
         top3,
+        recall10,
         misses,
     })
 }
 
-pub fn run(path: &Path, mode: Mode, entries: &[Entry], db: &Db, weights: Option<Weights>) -> Result<()> {
-    let report = evaluate(path, mode, entries, db, weights)?;
+pub fn run(path: &Path, mode: Mode, entries: &[Entry], db: &Db, tuning: Tuning) -> Result<()> {
+    let report = evaluate(path, mode, entries, db, tuning)?;
     println!("{} {}", tr("questions:", "preguntas:"), report.questions);
     println!("top-1:     {:.0}%", report.top1_pct());
     println!("top-3:     {:.0}%", report.top3_pct());
+    println!("recall@10: {:.0}%", report.recall10_pct());
     if !report.misses.is_empty() {
         println!(
             "\n{}",

@@ -13,21 +13,37 @@ use crate::placeholders;
 use crate::semantic;
 use crate::system;
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// How many BM25 hits are fetched before re-ranking and de-duplicating.
 const POOL: usize = 60;
 /// Nearest vectors fetched before de-duplicating (translations share a shape, so many collapse).
 const VECTOR_POOL: usize = 200;
-/// RRF constant; the usual value, and the one the 2.9a experiment used.
-const RRF_K: f64 = 60.0;
 /// If this few entries lack a vector (your cheats after editing `cheats.toml`) they are
 /// embedded on the spot; more than that waits for `pistasho update`.
 const EMBED_ON_THE_FLY: usize = 200;
 
 /// Tunable knobs. The values come from `pistasho eval --mode bm25`, see docs/eval.md.
+/// How the two rankings are fused (reciprocal rank fusion).
+#[derive(Debug, Clone, Copy)]
+pub struct Fusion {
+    /// Weight of the BM25 ranking.
+    pub bm25: f64,
+    /// Weight of the ranking by meaning.
+    pub meaning: f64,
+    /// RRF constant: the larger, the flatter the contribution of the top ranks.
+    pub k: f64,
+}
+
 pub struct Params {
     pub weights: Weights,
+    pub fusion: Fusion,
+    /// After this many entries of one tool, the next ones of that tool go behind the other tools'
+    /// (they are not dropped). 0 = off.
+    pub per_tool: usize,
+    /// Search the synonyms of the question words too.
+    pub synonyms: bool,
     /// Multiplier for your own cheats.
     pub cheat_boost: f64,
     /// Each use in your history adds this fraction to the score, up to `hist_boost_cap` uses.
@@ -37,6 +53,13 @@ pub struct Params {
 
 pub const PARAMS: Params = Params {
     weights: DEFAULT_WEIGHTS,
+    fusion: Fusion {
+        bm25: 1.0,
+        meaning: 2.0,
+        k: 10.0,
+    },
+    per_tool: 1,
+    synonyms: true,
     cheat_boost: 1.3,
     hist_boost_per_use: 0.03,
     hist_boost_cap: 10,
@@ -69,7 +92,8 @@ const STOP_WORDS: &[&str] = &[
     "need", "all",
 ];
 
-/// Lowercase and drop the accents of Spanish letters, to compare against `STOP_WORDS`.
+/// Lowercase and drop the accents of Spanish letters (`ñ` included), to compare against
+/// `STOP_WORDS` and the synonym table.
 fn fold(word: &str) -> String {
     word.chars()
         .map(|c| match c {
@@ -78,6 +102,7 @@ fn fold(word: &str) -> String {
             'í' => 'i',
             'ó' => 'o',
             'ú' | 'ü' => 'u',
+            'ñ' => 'n',
             c => c,
         })
         .collect()
@@ -89,6 +114,34 @@ pub fn terms(question: &str) -> Vec<String> {
         .into_iter()
         .filter(|w| !STOP_WORDS.contains(&fold(w).as_str()))
         .collect()
+}
+
+/// Question words that tldr says differently, from `data/synonyms.toml`, accents removed.
+fn synonyms() -> &'static HashMap<String, Vec<String>> {
+    static TABLE: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        #[derive(serde::Deserialize)]
+        struct File {
+            synonyms: HashMap<String, Vec<String>>,
+        }
+        toml::from_str::<File>(include_str!("../data/synonyms.toml"))
+            .expect("data/synonyms.toml is valid")
+            .synonyms
+    })
+}
+
+/// The question terms plus what the synonym table adds for them (each word once, in order).
+pub fn expand(terms: Vec<String>) -> Vec<String> {
+    let table = synonyms();
+    let mut out = terms.clone();
+    for t in &terms {
+        for extra in table.get(&fold(t)).into_iter().flatten() {
+            if !out.contains(extra) {
+                out.push(extra.clone());
+            }
+        }
+    }
+    out
 }
 
 /// tldr also lists keys typed inside an interactive program (`fdisk`'s `<n>`): they say what
@@ -172,7 +225,11 @@ pub fn ask_with(
     params: &Params,
     qvec: Option<&[f32]>,
 ) -> Result<Vec<Candidate>> {
-    let words = terms(question);
+    let words = if params.synonyms {
+        expand(terms(question))
+    } else {
+        terms(question)
+    };
     let mut ranked: Vec<Candidate> = db
         .fts_search_words(&words, POOL, params.weights)?
         .into_iter()
@@ -191,8 +248,11 @@ pub fn ask_with(
     if let Some(qvec) = qvec {
         // a question of only stop words finds nothing by BM25 and must stay that way
         if !ranked.is_empty() || !words.is_empty() {
-            ranked = fuse(ranked, by_meaning(db, qvec)?);
+            ranked = fuse(ranked, by_meaning(db, qvec)?, &params.fusion);
         }
+    }
+    if params.per_tool > 0 {
+        ranked = spread_tools(ranked, params.per_tool);
     }
     ranked.truncate(limit);
     // looked up after trimming: only the candidates that will be shown cost a PATH search
@@ -204,18 +264,41 @@ pub fn ask_with(
     Ok(ranked)
 }
 
+/// Keeps the order, but lets at most `max` tldr entries of one tool through at first: the rest
+/// follow after the others. `tar` has a dozen examples and would otherwise fill the whole list.
+/// Your cheats and history are never held back.
+fn spread_tools(ranked: Vec<Candidate>, max: usize) -> Vec<Candidate> {
+    let mut count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let (mut first, mut later) = (Vec::new(), Vec::new());
+    for c in ranked {
+        if c.entry.source != Source::Tldr {
+            first.push(c);
+            continue;
+        }
+        let n = count.entry(c.entry.tool.clone()).or_insert(0);
+        *n += 1;
+        if *n <= max {
+            first.push(c);
+        } else {
+            later.push(c);
+        }
+    }
+    first.extend(later);
+    first
+}
+
 /// BM25 (already boosted: your cheats and frequent history lead it) and meaning, fused by rank.
-fn fuse(bm25: Vec<Candidate>, meaning: Vec<Candidate>) -> Vec<Candidate> {
+fn fuse(bm25: Vec<Candidate>, meaning: Vec<Candidate>, fusion: &Fusion) -> Vec<Candidate> {
     let rankings = [
-        bm25.iter().map(identity).collect::<Vec<_>>(),
-        meaning.iter().map(identity).collect::<Vec<_>>(),
+        (bm25.iter().map(identity).collect::<Vec<_>>(), fusion.bm25),
+        (meaning.iter().map(identity).collect::<Vec<_>>(), fusion.meaning),
     ];
     let mut by_key: std::collections::HashMap<_, Candidate> = std::collections::HashMap::new();
     for c in bm25.into_iter().chain(meaning) {
         by_key.entry(identity(&c)).or_insert(c);
     }
     let mut seen = HashSet::new();
-    semantic::rrf(&rankings, RRF_K)
+    semantic::rrf(&rankings, fusion.k)
         .into_iter()
         .filter_map(|(key, score)| {
             let mut c = by_key.remove(&key)?;
@@ -285,6 +368,25 @@ mod tests {
         assert_eq!(top[0].entry.cmd, "sudo fdisk {{/dev/sdX}}");
     }
 
+    fn tool_of(tool: &str, cmd: &str, source: Source) -> Candidate {
+        let mut c = cand(cmd, source);
+        c.entry.tool = tool.into();
+        c
+    }
+
+    #[test]
+    fn one_tool_does_not_fill_the_list_but_your_own_commands_are_never_held_back() {
+        let ranked = vec![
+            tool_of("tar", "tar a", Source::Tldr),
+            tool_of("tar", "tar b", Source::Tldr),
+            tool_of("ssh", "ssh a", Source::Cheat),
+            tool_of("ssh", "ssh b", Source::Cheat),
+            tool_of("zip", "zip a", Source::Tldr),
+        ];
+        let cmds: Vec<String> = spread_tools(ranked, 1).into_iter().map(|c| c.entry.cmd).collect();
+        assert_eq!(cmds, vec!["tar a", "ssh a", "ssh b", "zip a", "tar b"]);
+    }
+
     fn cand(cmd: &str, source: Source) -> Candidate {
         Candidate {
             entry: entry("t", cmd, "", "", source, 0),
@@ -306,11 +408,46 @@ mod tests {
             cand("a {{y}}", Source::Tldr),
             cand("d", Source::Tldr),
         ];
-        let fused = fuse(bm25, meaning);
+        let fused = fuse(bm25, meaning, &PARAMS.fusion);
         let cmds: Vec<&str> = fused.iter().map(|c| c.entry.cmd.as_str()).collect();
-        // `a {{x}}` and `a {{y}}` have the same shape: the first one stands for both
-        assert_eq!(cmds, vec!["b", "a {{x}}", "c", "d"]);
+        // `a {{x}}` and `a {{y}}` have the same shape: the better ranked one stands for both
+        assert_eq!(cmds, vec!["b", "a {{y}}", "d", "c"]);
         assert!(fused.windows(2).all(|w| w[0].score >= w[1].score));
+    }
+
+    #[test]
+    fn synonyms_add_words_and_keep_the_original_ones_first() {
+        let out = expand(terms("crear una carpeta"));
+        assert_eq!(&out[..2], ["crear", "carpeta"]);
+        assert!(out.contains(&"directory".to_string()) && out.contains(&"create".to_string()));
+        // accents do not matter to the lookup, and an unknown word adds nothing
+        assert!(expand(terms("contraseña")).contains(&"password".to_string()));
+        assert_eq!(expand(terms("zzz")), vec!["zzz"]);
+        // no word twice even when two question words share a synonym
+        let out = expand(terms("borrar eliminar"));
+        assert_eq!(out.iter().filter(|w| *w == "remove").count(), 1);
+    }
+
+    #[test]
+    fn synonyms_let_a_spanish_question_reach_an_english_description() {
+        let db = db_with(
+            vec![entry(
+                "mkdir",
+                "mkdir {{dir}}",
+                "create directories",
+                "",
+                Source::Tldr,
+                0,
+            )],
+            vec![],
+            vec![],
+        );
+        assert_eq!(ask(&db, "crear una carpeta", 5).unwrap().len(), 1);
+        let mut off = PARAMS;
+        off.synonyms = false;
+        assert!(ask_with(&db, "crear una carpeta", 5, &off, None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

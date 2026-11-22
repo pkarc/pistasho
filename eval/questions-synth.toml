@@ -1,0 +1,1150 @@
+# Synthetic questions (task 3a): generated, not written by the user. Labels list every tool that is a
+# reasonable answer. Held apart from questions.toml so that tuning on one does not inflate the other.
+
+[[q]]
+question = "copiar un archivo a otra carpeta"
+tools = ["cp", "rsync"]
+
+[[q]]
+question = "mover un archivo a otro directorio"
+tools = ["mv"]
+
+[[q]]
+question = "renombrar un archivo"
+tools = ["mv", "rename"]
+
+[[q]]
+question = "borrar una carpeta con todo su contenido"
+tools = ["rm"]
+
+[[q]]
+question = "crear una carpeta nueva"
+tools = ["mkdir"]
+
+[[q]]
+question = "crear varias carpetas anidadas de una vez"
+tools = ["mkdir"]
+
+[[q]]
+question = "crear un archivo vacío"
+tools = ["touch"]
+
+[[q]]
+question = "ver el contenido de un archivo"
+tools = ["cat", "less", "bat"]
+
+[[q]]
+question = "ver las primeras líneas de un archivo"
+tools = ["head"]
+
+[[q]]
+question = "ver las últimas líneas de un archivo"
+tools = ["tail"]
+
+[[q]]
+question = "seguir un log en tiempo real"
+tools = ["tail", "journalctl"]
+
+[[q]]
+question = "listar archivos con detalles y tamaños legibles"
+tools = ["ls", "eza", "exa"]
+
+[[q]]
+question = "listar archivos ocultos"
+tools = ["ls", "eza"]
+
+[[q]]
+question = "mostrar el árbol de directorios"
+tools = ["tree", "eza", "find"]
+
+[[q]]
+question = "saber en qué carpeta estoy"
+tools = ["pwd"]
+
+[[q]]
+question = "crear un enlace simbólico"
+tools = ["ln"]
+
+[[q]]
+question = "ver el tipo de un archivo"
+tools = ["file"]
+
+[[q]]
+question = "ver información detallada de un archivo como fecha y permisos"
+tools = ["stat"]
+
+[[q]]
+question = "comparar dos archivos"
+tools = ["diff", "cmp", "vimdiff"]
+
+[[q]]
+question = "encontrar archivos duplicados"
+tools = ["fdupes", "rdfind", "jdupes"]
+
+[[q]]
+question = "sincronizar dos carpetas"
+tools = ["rsync"]
+
+[[q]]
+question = "copiar archivos a otro servidor"
+tools = ["scp", "rsync"]
+
+[[q]]
+question = "partir un archivo grande en trozos"
+tools = ["split"]
+
+[[q]]
+question = "unir varios archivos en uno"
+tools = ["cat"]
+
+[[q]]
+question = "vaciar un archivo sin borrarlo"
+tools = ["truncate"]
+
+[[q]]
+question = "calcular el hash sha256 de un archivo"
+tools = ["sha256sum", "shasum"]
+
+[[q]]
+question = "calcular el md5 de un archivo"
+tools = ["md5sum", "md5"]
+
+[[q]]
+question = "borrar archivos de forma segura"
+tools = ["shred"]
+
+[[q]]
+question = "cambiar el dueño de un archivo"
+tools = ["chown"]
+
+[[q]]
+question = "hacer ejecutable un script"
+tools = ["chmod"]
+
+[[q]]
+question = "quitar permisos de escritura a un archivo"
+tools = ["chmod"]
+
+[[q]]
+question = "buscar archivos por nombre"
+tools = ["find", "fd", "locate"]
+
+[[q]]
+question = "buscar archivos modificados en las últimas 24 horas"
+tools = ["find", "fd"]
+
+[[q]]
+question = "buscar archivos más grandes de 100 MB"
+tools = ["find", "fd"]
+
+[[q]]
+question = "buscar un archivo por nombre en todo el sistema"
+tools = ["locate", "find", "fd"]
+
+[[q]]
+question = "encontrar archivos vacíos"
+tools = ["find", "fd"]
+
+[[q]]
+question = "borrar todos los archivos .tmp de una carpeta"
+tools = ["find", "rm", "fd"]
+
+[[q]]
+question = "buscar un texto dentro de archivos"
+tools = ["grep", "rg", "ag", "ack"]
+
+[[q]]
+question = "buscar texto de forma recursiva en un proyecto"
+tools = ["grep", "rg", "ag"]
+
+[[q]]
+question = "buscar ignorando mayúsculas y minúsculas"
+tools = ["grep", "rg"]
+
+[[q]]
+question = "contar líneas de un archivo"
+tools = ["wc"]
+
+[[q]]
+question = "contar palabras de un archivo"
+tools = ["wc"]
+
+[[q]]
+question = "ordenar las líneas de un archivo"
+tools = ["sort"]
+
+[[q]]
+question = "quitar líneas repetidas"
+tools = ["uniq", "sort"]
+
+[[q]]
+question = "contar cuántas veces se repite cada línea"
+tools = ["uniq", "sort"]
+
+[[q]]
+question = "reemplazar una palabra en un archivo"
+tools = ["sed", "perl"]
+
+[[q]]
+question = "reemplazar texto en muchos archivos a la vez"
+tools = ["sed", "perl", "rg"]
+
+[[q]]
+question = "mostrar solo una columna de un archivo"
+tools = ["awk", "cut"]
+
+[[q]]
+question = "sumar los valores de una columna"
+tools = ["awk"]
+
+[[q]]
+question = "cortar texto por un delimitador"
+tools = ["cut", "awk"]
+
+[[q]]
+question = "pasar texto a mayúsculas"
+tools = ["tr", "awk"]
+
+[[q]]
+question = "borrar espacios al final de las líneas"
+tools = ["sed"]
+
+[[q]]
+question = "ver diferencias entre dos versiones de un texto"
+tools = ["diff", "git"]
+
+[[q]]
+question = "procesar un archivo JSON"
+tools = ["jq"]
+
+[[q]]
+question = "formatear un JSON para leerlo mejor"
+tools = ["jq", "python"]
+
+[[q]]
+question = "sacar un campo de un JSON"
+tools = ["jq"]
+
+[[q]]
+question = "procesar un archivo yaml"
+tools = ["yq"]
+
+[[q]]
+question = "procesar un csv desde la terminal"
+tools = ["csvkit", "awk", "xsv", "mlr", "qsv"]
+
+[[q]]
+question = "ver un archivo largo página por página"
+tools = ["less", "more", "bat"]
+
+[[q]]
+question = "contar caracteres de un texto"
+tools = ["wc"]
+
+[[q]]
+question = "numerar las líneas de un archivo"
+tools = ["nl", "cat"]
+
+[[q]]
+question = "invertir el orden de las líneas"
+tools = ["tac", "sort"]
+
+[[q]]
+question = "convertir un archivo de windows a unix"
+tools = ["dos2unix", "sed", "tr"]
+
+[[q]]
+question = "cambiar la codificación de un archivo a utf-8"
+tools = ["iconv", "recode"]
+
+[[q]]
+question = "unir dos archivos por una columna común"
+tools = ["join"]
+
+[[q]]
+question = "mostrar líneas que no contienen una palabra"
+tools = ["grep", "rg"]
+
+[[q]]
+question = "mostrar el contexto alrededor de una coincidencia"
+tools = ["grep", "rg"]
+
+[[q]]
+question = "ver mi dirección IP"
+tools = ["ip", "ifconfig", "hostname"]
+
+[[q]]
+question = "ver mi ip pública"
+tools = ["curl", "wget", "dig"]
+
+[[q]]
+question = "probar si hay conexión con un servidor"
+tools = ["ping"]
+
+[[q]]
+question = "hacer un ping de solo 4 paquetes"
+tools = ["ping"]
+
+[[q]]
+question = "descargar un archivo de internet"
+tools = ["wget", "curl", "aria2c"]
+
+[[q]]
+question = "hacer una petición http y ver las cabeceras"
+tools = ["curl", "http", "httpie"]
+
+[[q]]
+question = "enviar un post con json"
+tools = ["curl", "http", "httpie", "xh"]
+
+[[q]]
+question = "descargar un sitio web completo"
+tools = ["wget", "httrack"]
+
+[[q]]
+question = "ver la ruta que siguen los paquetes hasta un servidor"
+tools = ["traceroute", "mtr", "tracepath"]
+
+[[q]]
+question = "consultar los registros dns de un dominio"
+tools = ["dig", "nslookup", "host", "drill"]
+
+[[q]]
+question = "ver el registro mx de un dominio"
+tools = ["dig", "nslookup", "host"]
+
+[[q]]
+question = "escanear los puertos abiertos de un servidor"
+tools = ["nmap", "nc", "masscan"]
+
+[[q]]
+question = "comprobar si un puerto está abierto en otra máquina"
+tools = ["nc", "nmap", "telnet"]
+
+[[q]]
+question = "ver las conexiones de red activas"
+tools = ["ss", "netstat", "lsof"]
+
+[[q]]
+question = "ver qué programa usa el puerto 3000"
+tools = ["lsof", "ss", "fuser", "netstat"]
+
+[[q]]
+question = "ver el tráfico de red en tiempo real"
+tools = ["iftop", "nethogs", "tcpdump", "bmon", "nload"]
+
+[[q]]
+question = "capturar paquetes de red"
+tools = ["tcpdump", "tshark", "wireshark"]
+
+[[q]]
+question = "conectarme a un servidor por ssh"
+tools = ["ssh"]
+
+[[q]]
+question = "conectarme por ssh con una llave privada"
+tools = ["ssh"]
+
+[[q]]
+question = "generar una llave ssh"
+tools = ["ssh-keygen"]
+
+[[q]]
+question = "copiar mi llave pública a un servidor"
+tools = ["ssh-copy-id"]
+
+[[q]]
+question = "hacer un túnel ssh a un puerto remoto"
+tools = ["ssh", "autossh"]
+
+[[q]]
+question = "ver la tabla de rutas"
+tools = ["ip", "route", "netstat"]
+
+[[q]]
+question = "ver las interfaces de red"
+tools = ["ip", "ifconfig", "nmcli"]
+
+[[q]]
+question = "conectarme a una red wifi desde la terminal"
+tools = ["nmcli", "iwctl", "wpa_cli"]
+
+[[q]]
+question = "listar las redes wifi disponibles"
+tools = ["nmcli", "iwctl", "iwlist"]
+
+[[q]]
+question = "medir la velocidad de internet"
+tools = ["speedtest-cli", "speedtest", "fast"]
+
+[[q]]
+question = "ver el nombre del equipo"
+tools = ["hostname", "hostnamectl"]
+
+[[q]]
+question = "cambiar el nombre del equipo"
+tools = ["hostnamectl", "hostname"]
+
+[[q]]
+question = "servir una carpeta por http rápidamente"
+tools = ["python", "php", "http-server", "busybox"]
+
+[[q]]
+question = "ver el firewall"
+tools = ["ufw", "iptables", "nft", "firewall-cmd"]
+
+[[q]]
+question = "abrir un puerto en el firewall"
+tools = ["ufw", "iptables", "firewall-cmd", "nft"]
+
+[[q]]
+question = "ver quién está conectado al sistema"
+tools = ["who", "w", "last"]
+
+[[q]]
+question = "ver los procesos en ejecución"
+tools = ["ps", "top", "htop"]
+
+[[q]]
+question = "ver qué procesos consumen más cpu"
+tools = ["top", "htop", "ps", "btop"]
+
+[[q]]
+question = "ver qué procesos usan más memoria"
+tools = ["top", "htop", "ps", "btop"]
+
+[[q]]
+question = "matar un proceso por su nombre"
+tools = ["pkill", "killall", "kill"]
+
+[[q]]
+question = "matar un proceso por su pid"
+tools = ["kill"]
+
+[[q]]
+question = "forzar el cierre de un programa colgado"
+tools = ["kill", "pkill", "killall", "xkill"]
+
+[[q]]
+question = "ver cuánta memoria ram libre tengo"
+tools = ["free", "vmstat", "top"]
+
+[[q]]
+question = "ver el uso del disco"
+tools = ["df", "du", "ncdu"]
+
+[[q]]
+question = "ver el espacio libre en las particiones"
+tools = ["df"]
+
+[[q]]
+question = "ver qué carpeta ocupa más espacio"
+tools = ["du", "ncdu", "dust"]
+
+[[q]]
+question = "ver el tamaño de una carpeta"
+tools = ["du", "dust", "ncdu"]
+
+[[q]]
+question = "ver el uptime del sistema"
+tools = ["uptime"]
+
+[[q]]
+question = "ver la versión del kernel"
+tools = ["uname"]
+
+[[q]]
+question = "ver qué distribución de linux tengo"
+tools = ["lsb_release", "hostnamectl", "cat", "uname", "neofetch"]
+
+[[q]]
+question = "ver información de la cpu"
+tools = ["lscpu"]
+
+[[q]]
+question = "ver el hardware de la máquina"
+tools = ["lshw", "inxi", "lspci", "dmidecode", "hwinfo"]
+
+[[q]]
+question = "listar dispositivos usb conectados"
+tools = ["lsusb"]
+
+[[q]]
+question = "listar dispositivos pci"
+tools = ["lspci"]
+
+[[q]]
+question = "ver la temperatura del procesador"
+tools = ["sensors"]
+
+[[q]]
+question = "ejecutar un comando en segundo plano"
+tools = ["nohup", "screen", "tmux", "bg", "disown"]
+
+[[q]]
+question = "dejar un proceso corriendo aunque cierre la terminal"
+tools = ["nohup", "screen", "tmux", "disown"]
+
+[[q]]
+question = "ver los trabajos en segundo plano"
+tools = ["jobs"]
+
+[[q]]
+question = "repetir un comando cada 2 segundos"
+tools = ["watch"]
+
+[[q]]
+question = "medir cuánto tarda un comando"
+tools = ["time", "hyperfine"]
+
+[[q]]
+question = "programar una tarea que se repita"
+tools = ["crontab", "systemd", "at"]
+
+[[q]]
+question = "programar un comando para ejecutarse una vez más tarde"
+tools = ["at", "sleep", "systemd-run"]
+
+[[q]]
+question = "ver las tareas programadas del cron"
+tools = ["crontab"]
+
+[[q]]
+question = "apagar el equipo"
+tools = ["shutdown", "poweroff", "systemctl"]
+
+[[q]]
+question = "reiniciar la máquina"
+tools = ["reboot", "shutdown", "systemctl"]
+
+[[q]]
+question = "programar el apagado en 30 minutos"
+tools = ["shutdown"]
+
+[[q]]
+question = "ver el historial de comandos"
+tools = ["history", "fc"]
+
+[[q]]
+question = "buscar en el historial de comandos"
+tools = ["history", "fc", "grep"]
+
+[[q]]
+question = "limpiar la pantalla de la terminal"
+tools = ["clear", "reset", "tput"]
+
+[[q]]
+question = "ver las variables de entorno"
+tools = ["env", "printenv", "export"]
+
+[[q]]
+question = "definir una variable de entorno"
+tools = ["export", "env"]
+
+[[q]]
+question = "ver el valor de una variable de entorno"
+tools = ["printenv", "echo", "env"]
+
+[[q]]
+question = "saber dónde está instalado un programa"
+tools = ["which", "whereis", "type", "command"]
+
+[[q]]
+question = "ver la fecha y la hora"
+tools = ["date", "timedatectl", "cal"]
+
+[[q]]
+question = "cambiar la zona horaria"
+tools = ["timedatectl"]
+
+[[q]]
+question = "ver un calendario"
+tools = ["cal", "ncal"]
+
+[[q]]
+question = "ver qué archivos tiene abiertos un proceso"
+tools = ["lsof"]
+
+[[q]]
+question = "trazar las llamadas al sistema de un programa"
+tools = ["strace", "ltrace"]
+
+[[q]]
+question = "ver los límites de recursos del usuario"
+tools = ["ulimit", "prlimit"]
+
+[[q]]
+question = "ver los logs del sistema"
+tools = ["journalctl", "dmesg", "tail"]
+
+[[q]]
+question = "ver los mensajes del kernel"
+tools = ["dmesg", "journalctl"]
+
+[[q]]
+question = "ver los logs de un servicio de systemd"
+tools = ["journalctl"]
+
+[[q]]
+question = "reiniciar un servicio"
+tools = ["systemctl", "service"]
+
+[[q]]
+question = "habilitar un servicio al arrancar"
+tools = ["systemctl", "chkconfig"]
+
+[[q]]
+question = "ver el estado de un servicio"
+tools = ["systemctl", "service"]
+
+[[q]]
+question = "ver los servicios que han fallado"
+tools = ["systemctl"]
+
+[[q]]
+question = "ver los usuarios del sistema"
+tools = ["getent", "cat", "cut", "who", "w"]
+
+[[q]]
+question = "crear un usuario nuevo"
+tools = ["useradd", "adduser"]
+
+[[q]]
+question = "cambiar la contraseña de un usuario"
+tools = ["passwd", "chpasswd"]
+
+[[q]]
+question = "añadir un usuario a un grupo"
+tools = ["usermod", "gpasswd", "adduser"]
+
+[[q]]
+question = "ejecutar un comando como otro usuario"
+tools = ["sudo", "su", "runuser"]
+
+[[q]]
+question = "ver a qué grupos pertenezco"
+tools = ["groups", "id"]
+
+[[q]]
+question = "listar los discos y particiones"
+tools = ["lsblk", "fdisk", "parted", "blkid"]
+
+[[q]]
+question = "montar una usb"
+tools = ["mount", "udisksctl"]
+
+[[q]]
+question = "desmontar una unidad"
+tools = ["umount", "udisksctl"]
+
+[[q]]
+question = "formatear un disco en ext4"
+tools = ["mkfs", "mke2fs"]
+
+[[q]]
+question = "crear una partición nueva"
+tools = ["fdisk", "parted", "gdisk", "cfdisk"]
+
+[[q]]
+question = "ver el uuid de las particiones"
+tools = ["blkid", "lsblk"]
+
+[[q]]
+question = "copiar una imagen iso a una usb"
+tools = ["dd", "balena-etcher", "cp"]
+
+[[q]]
+question = "revisar errores en un disco"
+tools = ["fsck", "smartctl", "badblocks", "e2fsck"]
+
+[[q]]
+question = "ver el estado de salud de un disco"
+tools = ["smartctl"]
+
+[[q]]
+question = "crear una imagen de un disco"
+tools = ["dd", "ddrescue", "partclone"]
+
+[[q]]
+question = "crear un archivo swap"
+tools = ["mkswap", "fallocate", "dd", "swapon"]
+
+[[q]]
+question = "ver el uso de la memoria swap"
+tools = ["swapon", "free", "vmstat"]
+
+[[q]]
+question = "redimensionar una partición ext4"
+tools = ["resize2fs", "parted", "growpart"]
+
+[[q]]
+question = "ver el sistema de archivos de una partición"
+tools = ["lsblk", "blkid", "df", "mount", "findmnt"]
+
+[[q]]
+question = "comprimir una carpeta en tar.gz"
+tools = ["tar"]
+
+[[q]]
+question = "descomprimir un archivo tar.gz"
+tools = ["tar"]
+
+[[q]]
+question = "comprimir archivos en un zip"
+tools = ["zip", "7z"]
+
+[[q]]
+question = "descomprimir un zip"
+tools = ["unzip", "7z"]
+
+[[q]]
+question = "descomprimir un zip en otra carpeta"
+tools = ["unzip", "7z"]
+
+[[q]]
+question = "ver el contenido de un zip sin extraerlo"
+tools = ["unzip", "zipinfo", "7z"]
+
+[[q]]
+question = "comprimir con la máxima compresión"
+tools = ["xz", "7z", "zstd", "gzip", "bzip2"]
+
+[[q]]
+question = "descomprimir un archivo .rar"
+tools = ["unrar", "7z", "unar"]
+
+[[q]]
+question = "descomprimir un archivo .7z"
+tools = ["7z", "7za", "7zr"]
+
+[[q]]
+question = "comprimir un archivo con gzip"
+tools = ["gzip", "pigz"]
+
+[[q]]
+question = "ver el contenido de un tar sin extraerlo"
+tools = ["tar"]
+
+[[q]]
+question = "extraer un solo archivo de un tar"
+tools = ["tar"]
+
+[[q]]
+question = "excluir una carpeta al comprimir"
+tools = ["tar", "zip", "7z"]
+
+[[q]]
+question = "comprimir con zstd"
+tools = ["zstd", "tar"]
+
+[[q]]
+question = "ver el estado del repositorio"
+tools = ["git"]
+
+[[q]]
+question = "guardar mis cambios en git"
+tools = ["git"]
+
+[[q]]
+question = "deshacer el último commit"
+tools = ["git"]
+
+[[q]]
+question = "ver el historial de commits"
+tools = ["git"]
+
+[[q]]
+question = "crear una rama nueva"
+tools = ["git"]
+
+[[q]]
+question = "cambiar de rama"
+tools = ["git"]
+
+[[q]]
+question = "subir mis cambios al remoto"
+tools = ["git"]
+
+[[q]]
+question = "traer los cambios del remoto"
+tools = ["git"]
+
+[[q]]
+question = "clonar un repositorio"
+tools = ["git", "gh"]
+
+[[q]]
+question = "ver qué cambió en los archivos"
+tools = ["git", "diff"]
+
+[[q]]
+question = "descartar los cambios de un archivo"
+tools = ["git"]
+
+[[q]]
+question = "guardar cambios temporalmente sin commit"
+tools = ["git"]
+
+[[q]]
+question = "ver quién modificó cada línea de un archivo"
+tools = ["git"]
+
+[[q]]
+question = "combinar una rama en otra"
+tools = ["git"]
+
+[[q]]
+question = "borrar una rama local"
+tools = ["git"]
+
+[[q]]
+question = "añadir un repositorio remoto"
+tools = ["git"]
+
+[[q]]
+question = "crear una etiqueta de versión"
+tools = ["git"]
+
+[[q]]
+question = "cambiar el mensaje del último commit"
+tools = ["git"]
+
+[[q]]
+question = "ver los remotos configurados"
+tools = ["git"]
+
+[[q]]
+question = "buscar en qué commit se introdujo un bug"
+tools = ["git"]
+
+[[q]]
+question = "crear un pull request desde la terminal"
+tools = ["gh", "hub", "glab"]
+
+[[q]]
+question = "ver los contenedores de docker en ejecución"
+tools = ["docker", "podman"]
+
+[[q]]
+question = "ver todas las imágenes de docker"
+tools = ["docker", "podman"]
+
+[[q]]
+question = "entrar a un contenedor en ejecución"
+tools = ["docker", "podman", "kubectl"]
+
+[[q]]
+question = "ver los logs de un contenedor"
+tools = ["docker", "podman", "kubectl"]
+
+[[q]]
+question = "detener todos los contenedores"
+tools = ["docker", "podman"]
+
+[[q]]
+question = "borrar imágenes de docker que no uso"
+tools = ["docker", "podman"]
+
+[[q]]
+question = "levantar servicios con docker compose"
+tools = ["docker-compose", "docker", "podman-compose"]
+
+[[q]]
+question = "construir una imagen de docker"
+tools = ["docker", "podman", "buildah"]
+
+[[q]]
+question = "ver los pods de kubernetes"
+tools = ["kubectl", "k9s"]
+
+[[q]]
+question = "crear un entorno virtual de python"
+tools = ["python", "virtualenv", "uv", "python3", "venv"]
+
+[[q]]
+question = "instalar dependencias de python desde requirements"
+tools = ["pip", "uv", "pip3"]
+
+[[q]]
+question = "ver los paquetes de python instalados"
+tools = ["pip", "uv", "pip3"]
+
+[[q]]
+question = "ejecutar un servidor http simple con python"
+tools = ["python", "python3"]
+
+[[q]]
+question = "instalar dependencias de un proyecto node"
+tools = ["npm", "yarn", "pnpm"]
+
+[[q]]
+question = "compilar un proyecto de rust"
+tools = ["cargo"]
+
+[[q]]
+question = "ejecutar los tests de un proyecto de rust"
+tools = ["cargo"]
+
+[[q]]
+question = "ver la versión de node instalada"
+tools = ["node", "nvm", "npm"]
+
+[[q]]
+question = "compilar un archivo c"
+tools = ["gcc", "cc", "clang"]
+
+[[q]]
+question = "compilar un proyecto con make"
+tools = ["make", "cmake"]
+
+[[q]]
+question = "formatear un json en la terminal"
+tools = ["jq", "python"]
+
+[[q]]
+question = "instalar un paquete"
+tools = ["apt", "apt-get", "dnf", "pacman", "zypper", "yum"]
+
+[[q]]
+question = "actualizar los paquetes del sistema"
+tools = ["apt", "apt-get", "dnf", "pacman", "zypper", "yum"]
+
+[[q]]
+question = "buscar un paquete disponible"
+tools = ["apt", "apt-cache", "dnf", "pacman", "zypper", "apt-get"]
+
+[[q]]
+question = "desinstalar un paquete"
+tools = ["apt", "apt-get", "dnf", "pacman", "zypper", "yum"]
+
+[[q]]
+question = "ver los paquetes instalados"
+tools = ["dpkg", "apt", "dnf", "pacman", "rpm", "zypper"]
+
+[[q]]
+question = "saber a qué paquete pertenece un archivo"
+tools = ["dpkg", "apt-file", "rpm", "pacman", "dnf"]
+
+[[q]]
+question = "limpiar paquetes que ya no se necesitan"
+tools = ["apt", "apt-get", "dnf", "pacman", "zypper", "yum"]
+
+[[q]]
+question = "instalar una aplicación snap"
+tools = ["snap"]
+
+[[q]]
+question = "instalar un paquete .deb descargado"
+tools = ["dpkg", "apt", "gdebi"]
+
+[[q]]
+question = "instalar una aplicación flatpak"
+tools = ["flatpak"]
+
+[[q]]
+question = "convertir un video a mp4"
+tools = ["ffmpeg", "handbrake-cli", "HandBrakeCLI"]
+
+[[q]]
+question = "extraer el audio de un video"
+tools = ["ffmpeg"]
+
+[[q]]
+question = "convertir una imagen de png a jpg"
+tools = ["convert", "magick", "ffmpeg", "mogrify", "gm"]
+
+[[q]]
+question = "redimensionar una imagen"
+tools = ["convert", "magick", "mogrify", "ffmpeg", "gm", "sips"]
+
+[[q]]
+question = "descargar un video de youtube"
+tools = ["yt-dlp", "youtube-dl"]
+
+[[q]]
+question = "unir varios pdf en uno"
+tools = ["pdfunite", "qpdf", "pdftk", "gs", "pdfjam"]
+
+[[q]]
+question = "convertir un documento word a pdf"
+tools = ["libreoffice", "soffice", "pandoc", "unoconv"]
+
+[[q]]
+question = "convertir markdown a html"
+tools = ["pandoc", "markdown", "cmark"]
+
+[[q]]
+question = "hacer una captura de pantalla"
+tools = ["scrot", "import", "gnome-screenshot", "maim", "flameshot", "grim", "spectacle"]
+
+[[q]]
+question = "copiar texto al portapapeles desde la terminal"
+tools = ["xclip", "xsel", "wl-copy", "pbcopy"]
+
+[[q]]
+question = "reproducir un audio desde la terminal"
+tools = ["mpv", "play", "mpg123", "ffplay", "vlc", "cvlc"]
+
+[[q]]
+question = "ver el volumen y cambiarlo"
+tools = ["amixer", "pactl", "wpctl", "pamixer"]
+
+[[q]]
+question = "ver el nivel de batería"
+tools = ["upower", "acpi", "cat", "tlp-stat"]
+
+[[q]]
+question = "cambiar el brillo de la pantalla"
+tools = ["brightnessctl", "xrandr", "light", "xbacklight"]
+
+[[q]]
+question = "ver las resoluciones de pantalla disponibles"
+tools = ["xrandr", "wlr-randr"]
+
+[[q]]
+question = "generar una contraseña aleatoria"
+tools = ["pwgen", "openssl", "apg", "head", "pass", "makepasswd"]
+
+[[q]]
+question = "generar un uuid"
+tools = ["uuidgen", "uuid", "python"]
+
+[[q]]
+question = "codificar un texto en base64"
+tools = ["base64", "openssl"]
+
+[[q]]
+question = "decodificar base64"
+tools = ["base64", "openssl"]
+
+[[q]]
+question = "cifrar un archivo con contraseña"
+tools = ["gpg", "openssl", "7z", "zip", "age", "ccrypt"]
+
+[[q]]
+question = "generar un certificado ssl autofirmado"
+tools = ["openssl", "mkcert"]
+
+[[q]]
+question = "ver la fecha de caducidad de un certificado"
+tools = ["openssl"]
+
+[[q]]
+question = "hacer una calculadora desde la terminal"
+tools = ["bc", "dc", "python", "calc", "qalc", "expr"]
+
+[[q]]
+question = "hacer una operación matemática en la terminal"
+tools = ["bc", "expr", "dc", "python", "awk", "calc", "qalc"]
+
+[[q]]
+question = "ver un manual de un comando"
+tools = ["man", "tldr", "info"]
+
+[[q]]
+question = "abrir un archivo con la aplicación predeterminada"
+tools = ["xdg-open", "open", "gio"]
+
+[[q]]
+question = "editar un archivo en la terminal"
+tools = ["nano", "vim", "vi", "nvim", "emacs", "micro"]
+
+[[q]]
+question = "multiplexar la terminal en varios paneles"
+tools = ["tmux", "screen", "zellij"]
+
+[[q]]
+question = "crear una sesión de tmux"
+tools = ["tmux"]
+
+[[q]]
+question = "listar las sesiones de tmux"
+tools = ["tmux"]
+
+[[q]]
+question = "mostrar texto con colores en la terminal"
+tools = ["echo", "printf", "tput"]
+
+[[q]]
+question = "esperar unos segundos en un script"
+tools = ["sleep"]
+
+[[q]]
+question = "repetir un comando varias veces en un bucle"
+tools = ["seq", "for", "xargs", "yes", "while"]
+
+[[q]]
+question = "ejecutar un comando para cada línea de un archivo"
+tools = ["xargs", "parallel", "while", "read"]
+
+[[q]]
+question = "ejecutar comandos en paralelo"
+tools = ["parallel", "xargs"]
+
+[[q]]
+question = "crear un alias"
+tools = ["alias"]
+
+[[q]]
+question = "ver los alias definidos"
+tools = ["alias"]
+
+[[q]]
+question = "ver el contenido de la variable PATH"
+tools = ["echo", "printenv", "env"]
+
+[[q]]
+question = "mostrar las últimas sesiones de usuario"
+tools = ["last", "lastlog", "w"]
+
+[[q]]
+question = "ver el idioma y locale del sistema"
+tools = ["locale", "localectl"]
+
+[[q]]
+question = "cambiar la distribución del teclado"
+tools = ["setxkbmap", "localectl", "loadkeys"]
+
+[[q]]
+question = "mostrar información del sistema de forma bonita"
+tools = ["neofetch", "fastfetch", "inxi", "screenfetch"]
+
+[[q]]
+question = "what is using my disk space"
+tools = ["du", "ncdu", "df", "dust"]
+
+[[q]]
+question = "how to extract a tar.gz file"
+tools = ["tar"]
+
+[[q]]
+question = "kill a process listening on a port"
+tools = ["fuser", "lsof", "kill"]
+
+[[q]]
+question = "find all files larger than 1GB"
+tools = ["find", "fd"]
+
+[[q]]
+question = "show git log in one line per commit"
+tools = ["git"]
+
+[[q]]
+question = "check which process is using the most memory"
+tools = ["top", "htop", "ps", "btop"]
+
+[[q]]
+question = "download a file with curl and follow redirects"
+tools = ["curl", "wget"]
+
+[[q]]
+question = "count the lines of code in a project"
+tools = ["wc", "cloc", "tokei", "scc"]
+
+[[q]]
+question = "watch a directory for changes"
+tools = ["inotifywait", "entr", "watchexec", "fswatch"]
+
+[[q]]
+question = "show the weather in the terminal"
+tools = ["curl", "wego", "wttr"]

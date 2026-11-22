@@ -101,6 +101,15 @@ enum Command {
         /// BM25 column weights for tuning: description,alt,tool,cmd (e.g. 3,1,5,1.5)
         #[arg(long, value_delimiter = ',')]
         weights: Option<Vec<f64>>,
+        /// Fusion for tuning: bm25 weight, meaning weight, RRF k (e.g. 1,2,60)
+        #[arg(long, value_delimiter = ',')]
+        fusion: Option<Vec<f64>>,
+        /// Entries of one tool allowed before the others get their turn (0 = off)
+        #[arg(long)]
+        per_tool: Option<usize>,
+        /// Do not add the synonyms of the question words (for A/B measurements)
+        #[arg(long)]
+        no_synonyms: bool,
     },
     /// Turns a question into the best command (prints only the command)
     Ask {
@@ -278,7 +287,14 @@ fn run() -> Result<ExitCode> {
             doctor(&programs, table);
             Ok(ExitCode::SUCCESS)
         }
-        Command::Eval { file, mode, weights } => {
+        Command::Eval {
+            file,
+            mode,
+            weights,
+            fusion,
+            per_tool,
+            no_synonyms,
+        } => {
             let cfg = Config::load()?;
             embed::init(&cfg);
             let idx = Index::load(&cfg)?;
@@ -291,7 +307,30 @@ fn run() -> Result<ExitCode> {
                     "--weights necesita 4 números separados por comas: description,alt,tool,cmd"
                 )),
             };
-            eval::run(&file, mode, &idx.entries, &db, weights)?;
+            let fusion = match fusion {
+                None => None,
+                Some(f) if f.len() == 3 => Some(ask::Fusion {
+                    bm25: f[0],
+                    meaning: f[1],
+                    k: f[2],
+                }),
+                Some(_) => anyhow::bail!(tr(
+                    "--fusion needs 3 comma-separated numbers: bm25 weight,meaning weight,k",
+                    "--fusion necesita 3 números separados por comas: peso de bm25,peso de significado,k"
+                )),
+            };
+            eval::run(
+                &file,
+                mode,
+                &idx.entries,
+                &db,
+                eval::Tuning {
+                    weights,
+                    fusion,
+                    per_tool,
+                    synonyms: no_synonyms.then_some(false),
+                },
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Ask {

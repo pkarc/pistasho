@@ -157,3 +157,37 @@ Implementado como estaba decidido en 2.9a: `ort` directo, vectores `i8` en SQLit
 
 La mitigación por precarga funciona: el criterio de ~150 ms se cumple en el uso normal. Queda el peor caso, y la calidad absoluta sigue lejos del 85–90% de top-1 que justificaría descartar la fase 3 (criterio del CLAUDE.md).
 
+## Tarea 3.0 · Rerankers y techo de la recuperación (2026-11-21)
+
+Antes de construir la fase 3 se midió si una capa de decisión tendría de dónde ganar. Dos bancos: las 101 preguntas originales y **287 sintéticas** (`eval/questions-synth.toml`, generadas, con las herramientas aceptadas listadas a mano). Una herramienta acierta también con sus subcomandos (`ip-address` vale por `ip`, `git-diff` por `git`): con la regla estricta de antes varios fallos eran falsos.
+
+### Rerankers sin ajustar (`scripts/rerank_experiment.py`, CPU, sobre los 20 mejores candidatos)
+
+| | originales (top-1 / top-3) | sintéticas | Latencia |
+|---|---|---|---|
+| orden del híbrido (de entonces) | 46 / 61 | 33 / 48 | n/a |
+| mmarco-mMiniLMv2 (118M) | 42 / 55 | 25 / 46 | 190 ms |
+| horizon-small (141M) | 44 / 61 | 32 / 50 | 365 ms |
+| bge-reranker-v2-m3 (568M) | 48 / 60 | 31 / 51 | 2.2 s |
+
+Ninguno mejora de forma útil y todos cuestan mucho más que el presupuesto (~150 ms). Con la regla estricta el recall@10 del híbrido era 69% / 60%: el techo estaba en la recuperación, no en el orden. Laya sin ajustar no se probó: su ficha reporta ≈0.35 de acierto frente a 0.32 del azar y dice que es "una base para especializar".
+
+### Subir el techo (top-1 / top-3 / recall@10, regla de subcomandos, híbrido)
+
+| Paso | originales | sintéticas |
+|---|---|---|
+| RRF 1:1, k=60 (punto de partida) | 50 / 67 / 74 | 45 / 61 / 72 |
+| + pesos 1:2, k=10 | 50 / 67 / 82 | 48 / 62 / 77 |
+| + un ejemplo de tldr por herramienta (`per_tool = 1`) | 50 / 73 / 84 | 48 / 64 / 81 |
+| + sinónimos (`data/synonyms.toml`) | **51 / 74 / 85** | **47 / 66 / 84** |
+
+- Rejilla de fusión (1:0, 1:1, 1:2, 1:3, 1:5, 0:1 y k = 5, 10, 20, 60): la diferencia entre las buenas es de 1–2 puntos; se eligió 1:2 con k=10 por el mejor recall en los dos bancos. Solo meaning (0:1) queda en 47/62/80, así que BM25 aporta.
+- `per_tool`: 1 gana 6 puntos de top-3; 2 y 3 casi no cambian nada.
+- Sinónimos: lo que más sube a **BM25 solo** (originales 41/60/74 → 48/69/83; sintéticas 35/54/69 → 37/61/76), es decir, a quien no baje el modelo. En el híbrido suma 1–3 puntos.
+- Un hallazgo: `fold` no quitaba la `ñ`, y los sinónimos de `contraseña`, `tamaño` o `dueño` nunca coincidían (lo vio un test).
+- **Riesgo de sobreajuste, pequeño pero real:** los pesos, `per_tool` y la tabla se eligieron mirando ambos bancos, y el banco sintético lo escribí yo conociendo los fallos de la primera pasada. Son pocos parámetros y la tabla es vocabulario general, pero la cifra honesta de generalización llegará con preguntas reales del usuario (tarea 1.4).
+
+### Lo que sigue fallando
+
+Comandos cotidianos con descripciones muy genéricas (`rm`, `mkdir`, `pwd`, `ping`, `ssh-keygen`, `hostname`) pierden contra herramientas raras que casualmente comparten una palabra (`gdown`, `b2`, `nxc-ssh`). Es un problema de modelo de significado (e5-small es pequeño) o de prioridad de herramientas comunes, no de orden entre los 10 primeros.
+
