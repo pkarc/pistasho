@@ -222,6 +222,27 @@ El código nunca se compiló con sus dependencias.
 
 ---
 
+## Visión a largo plazo (idea del usuario, 2026-11-21; **por conversar al terminar las demás fases, no se construye antes**)
+
+**La idea.** Un modelo entrenado con datos de uso real es la mejor forma de mejorar `ask` (los rerankers genéricos no ayudaron, ver `docs/eval.md`, tarea 3.0). Lo difícil es conseguir los datos, así que el usuario propone un **programa de compartir datos** al instalar la herramienta: quien quiera, aporta datos de uso a medida que usa pistasho, y con ellos se crea y se corrige el modelo (por ejemplo el reranker ajustado de la fase 3, o los embeddings).
+
+**Por qué encaja.** El banco de preguntas sintético sobreajusta (se vio en 3.0) y el banco real del usuario es chico (tarea 1.4). Cada uso trae una señal natural de calidad: qué se preguntó, qué comando se mostró y si el usuario lo aceptó, eligió otra alternativa o lo editó.
+
+**Lo que choca con los principios actuales y hay que resolver antes de tocar nada:**
+- El principio 3 hoy solo habla del modelo remoto ("solo pregunta, OS y shell; nunca historial, archivos ni rutas"). Un programa de datos exige reescribirlo: qué se recoge, cuándo y con qué permiso.
+- Debe ser **opt-in explícito** (apagado por defecto, pregunta clara en `pistasho config`, fácil de apagar y de borrar lo ya enviado), con un modo que muestre exactamente lo que se enviaría antes de enviarlo.
+- Las preguntas pueden contener secretos (hosts, rutas, nombres, contraseñas pegadas en un comando). Hace falta filtrado local y una lista cerrada de campos: lo mínimo sería pregunta + comando final + señal (aceptado / alternativa / editado), sin historial, sin rutas, sin variables de entorno. El historial local **nunca** se envía.
+
+**Preguntas abiertas para la conversación:**
+1. ¿Qué se recoge exactamente y cómo se anonimiza? ¿Se guardan las preguntas literales o solo agregados?
+2. ¿Dónde se guarda y quién lo mantiene (servidor propio, coste, retención, borrado a petición)? ¿Qué obligaciones legales aplican (GDPR y similares)?
+3. ¿Cómo se usa: datos públicos con licencia abierta, o privados? ¿El modelo resultante se publica?
+4. ¿Cómo se evita envenenar el modelo (señales falsas, spam) y cómo se separa entrenamiento y prueba?
+5. ¿Cuántos usuarios hacen falta para que sirva? Antes de lanzarlo conviene saber si habrá usuarios (fase 5, empaquetado) y medir con un modelo ajustado con datos sintéticos si el esfuerzo compensa.
+6. Alternativa sin enviar nada: aprendizaje local (ajustar pesos o un reranker con el propio historial y las propias elecciones del usuario, todo en su máquina). Sirve como primer paso y no toca la privacidad.
+
+---
+
 ## Notas
 
 <!-- Anota aquí decisiones o cambios de plan, con fecha. -->

@@ -113,6 +113,9 @@ El detalle por tareas está en `PLAN.md`. Resumen:
 - Criterio para descartarlo: si la búsqueda híbrida ya acierta el top-1 en un 85–90% de los casos, si Laya ajustado no mejora 5–10 puntos, o si tarda más de ~300 ms en la máquina del usuario.
 - El usuario decidió (2026-11-21) usar solo la máquina local: nada de Proxmox ni laya-serve. Los rerankers sin ajustar probados en 3.0 no mejoran el orden actual (`docs/eval.md`).
 
+### Visión a largo plazo (solo anotada)
+- El usuario propone un programa opt-in de compartir datos de uso para entrenar y corregir un modelo (detalle y preguntas abiertas en `PLAN.md`, sección "Visión a largo plazo"). **No construir nada de esto ni enviar datos antes de que el usuario lo converse al terminar las demás fases.** Choca con el principio 3 tal como está escrito.
+
 ### Fase 4: LLM de respaldo
 - Interfaz `Generate`: Anthropic (por defecto `claude-haiku-5-5`, key desde la variable de `llm.api_key_env`) y Ollama (`llm.endpoint`, `llm.model`).
 - Respuesta en JSON estructurado: `{command, binaries[], package?, risk, explanation}`. Validar siempre con el paso de binarios y riesgo de la fase 2.
