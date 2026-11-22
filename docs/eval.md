@@ -260,3 +260,17 @@ Los que Jev suma con el corte final: `find / -name '*.log' -delete`, `truncate -
 
 ~200 ms por llamada con 10, 20 o 30 candidatos (una para elegir y otra para el riesgo, en serie) y $0.042 por millón de tokens de entrada (≈ 350 tokens con 2 opciones, ~1000 con 20): evaluar los 388 casos costó céntimos. Sin caché de veredictos.
 
+## Fase 3 · Laya local sin ajustar (2026-11-22)
+
+El usuario aclaró (2026-11-22) que Proxmox y Ollama siguen descartados, pero que Laya local con un daemon tiene sentido **si los recursos son una fracción manejable**; fijó el presupuesto en **hasta ~1 GB de RAM residente, con apagado solo tras un rato sin uso**, y pidió medir primero (`scripts/laya_experiment.py`: el mismo experimento `choice` que con Jev, 20 candidatos + "none", pero con `laya-multilingual` en esta máquina, 16 hilos, PyTorch CPU fp32).
+
+| | originales (101) top-1 / top-3 | sintéticas (287) top-1 / top-3 |
+|---|---|---|
+| orden local (híbrido) | 53 / 76 | 47 / 65 |
+| **Laya multilingüe sin ajustar**, reordenando | **22 / 51** | **21 / 46** |
+| Jev, 20 candidatos (referencia) | 83 / 92 | 76 / 88 |
+
+- **No sirve sin ajustar:** peor que el orden local y casi al azar entre 20 candidatos; dice "none" en el 24–26% de las preguntas sin que eso signifique nada (el candidato local acierta 33–49% ahí). Su propia ficha ya lo decía ("una base para especializar, no un motor de decisión listo para usar").
+- **Recursos medidos (PyTorch fp32):** 2279 MB de RAM máxima (incluye la carga del checkpoint de 647 MB), 5.6 s de carga con el caché de Hugging Face caliente (24.7 s la primera vez), ~190 ms de mediana por llamada con 20 candidatos (p95 ~240 ms). **Supera el presupuesto de 1 GB**; la variante ONNX int8 (`laya[onnx]`, ~0.5 GB según la ficha) no se midió.
+- **Lo que falta para que sea una opción:** ajustarlo con datos propios (3.2 y 3.3), exportarlo a ONNX int8 y medir que cabe en el presupuesto y en ~200 ms, y escribir el daemon. El acierto ajustado es **desconocido**; Jev ya da 76–83% hoy.
+
