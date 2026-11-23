@@ -10,6 +10,8 @@
 #   training/run.sh pack                data + eval candidates -> training/out/bundle.tar.gz to copy to the GPU machine
 #   training/run.sh unpack bundle.tar.gz   (GPU machine)
 #   training/run.sh baseline            the untouched checkpoint on the eval banks (zero-shot reference)
+#   training/run.sh smoke               200 rows on the GPU: rows per second, memory, no NaN (first thing to run there)
+#   training/run.sh ladder              the same recipe with 10k, 40k and 100k rows ($SIZES): does more data help?
 #   training/run.sh grid                trains and evaluates every variant in $VARIANTS (GPU machine, hours)
 #   training/run.sh train NAME FMT CANDS HEAD    one variant
 #   training/run.sh export NAME FMT CANDS   pruned ONNX of a trained variant + parity and size check
@@ -25,6 +27,9 @@ MICRO_BATCH="${MICRO_BATCH:-16}"
 GRAD_ACCUM="${GRAD_ACCUM:-4}"
 # NAME:FMT:CANDS:HEAD_MAX_LEN  (HEAD_MAX_LEN is the token budget for all the options together)
 VARIANTS="${VARIANTS:-td20h256:td:20:256 td20h512:td:20:512 tdc20h768:tdc:20:768 td10h256:td:10:256}"
+SIZES="${SIZES:-10000 40000 100000}"
+# data stage: GEN = generated-question files, NL2BASH = import_nl2bash.py output, both optional
+GEN="${GEN:-}"; NL2BASH="${NL2BASH:-}"; MAX_PER_TOOL="${MAX_PER_TOOL:-150}"
 BASE="${BASE:-multilingual}"
 
 stage_setup() {
@@ -48,14 +53,17 @@ PY
 
 stage_data() {
   for fmt in td tdc; do
-    "$PY" training/make_data.py --out "$OUT/data-$fmt" --fmt "$fmt" --cands 20 --workers "${WORKERS:-8}"
+    # shellcheck disable=SC2086
+    "$PY" training/make_data.py --out "$OUT/data-$fmt" --fmt "$fmt" --cands 20 --workers "${WORKERS:-8}" \
+      --max-per-tool "$MAX_PER_TOOL" ${GEN:+--generated $GEN} ${NL2BASH:+--toollevel $NL2BASH}
   done
   "$PY" training/make_eval_cache.py "$OUT/eval-cands.json"
+  "$PY" training/make_eval_cache.py "$OUT/eval-cands-casual.json" --casual
 }
 
 stage_pack() {
   tar czf "$OUT/bundle.tar.gz" -C "$OUT" \
-    data-td/train.jsonl data-td/valid.jsonl data-tdc/train.jsonl data-tdc/valid.jsonl eval-cands.json
+    data-td/train.jsonl data-td/valid.jsonl data-tdc/train.jsonl data-tdc/valid.jsonl eval-cands.json eval-cands-casual.json
   ls -la "$OUT/bundle.tar.gz"
 }
 
@@ -67,16 +75,42 @@ stage_baseline() {
 }
 
 stage_train() {
-  local name="$1" fmt="$2" cands="$3" head="$4"
+  local name="$1" fmt="$2" cands="$3" head="$4" data="${5:-$OUT/data-$2}"
   local run="$OUT/runs/$name"
   mkdir -p "$run"
+  local started rows
+  started=$(date +%s); rows=$(wc -l <"$data/train.jsonl")
   # the sequence is the options' budget plus room for the question and the instructions
-  "$PY" -m laya.train_cli --data "$OUT/data-$fmt/train.jsonl" --eval "$OUT/data-$fmt/valid.jsonl" --base "$BASE" \
+  "$PY" -m laya.train_cli --data "$data/train.jsonl" --eval "$data/valid.jsonl" --base "$BASE" \
     --out "$run/ckpt" --epochs "$EPOCHS" --micro-batch "$MICRO_BATCH" --grad-accum "$GRAD_ACCUM" \
     --head-max-len "$head" --max-len "$((head + 256))" --loss soft-ce --shuffle-options --device auto \
     2>&1 | tee "$run/train.log"
-  "$PY" training/evaluate.py --model "$run/ckpt" --cache "$OUT/eval-cands.json" --fmt "$fmt" --cands "$cands" \
-    --json "$run/eval.json" 2>&1 | grep -v -i warn | tee "$run/eval.txt"
+  echo "trained $rows rows x $EPOCHS epochs in $(( $(date +%s) - started )) s" | tee -a "$run/train.log"
+  for bank in "" "-casual"; do
+    [ -f "$OUT/eval-cands$bank.json" ] || continue
+    echo "######## eval banks${bank:- as written}" | tee -a "$run/eval.txt"
+    "$PY" training/evaluate.py --model "$run/ckpt" --cache "$OUT/eval-cands$bank.json" --fmt "$fmt" --cands "$cands" \
+      --json "$run/eval$bank.json" 2>&1 | grep -v -i warn | tee -a "$run/eval.txt"
+  done
+}
+
+stage_smoke() {
+  "$PY" - <<'PY'
+import torch
+assert torch.cuda.is_available(), "no CUDA: this is meant for the GPU machine"
+print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))
+PY
+  "$PY" training/subsample.py "$OUT/data-td" 200 "$OUT/data-smoke"
+  EPOCHS=1 stage_train smoke td 20 512 "$OUT/data-smoke"
+  nvidia-smi --query-gpu=memory.used,memory.total --format=csv 2>/dev/null || true
+}
+
+stage_ladder() {
+  for n in $SIZES; do
+    "$PY" training/subsample.py "$OUT/data-td" "$n" "$OUT/data-ladder-$n"
+    EPOCHS=1 stage_train "ladder-$n" td 20 512 "$OUT/data-ladder-$n"
+  done
+  "$PY" training/summary.py "$OUT"
 }
 
 stage_grid() {
@@ -101,6 +135,8 @@ case "$cmd" in
   pack) stage_pack ;;
   unpack) stage_unpack "$@" ;;
   baseline) stage_baseline ;;
+  smoke) stage_smoke ;;
+  ladder) stage_ladder ;;
   train) stage_train "$@" ;;
   grid) stage_grid ;;
   export) stage_export "$@" ;;

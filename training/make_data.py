@@ -167,12 +167,17 @@ def main():
     ap.add_argument("--generated-only", action="store_true", help="use only the generated questions, not the ones derived from the descriptions")
     ap.add_argument("--casual", type=float, default=0.8, help="share of the questions written the way people type (lowercase, no accents, no ¿ ¡ or final stop); see style.py")
     ap.add_argument("--toollevel", nargs="*", default=[], help="JSONL from import_nl2bash.py: questions whose answer is a tool, not one example")
+    ap.add_argument("--max-per-tool", type=int, default=0, help="at most this many questions per tool (0 = no limit): tldr has hundreds of examples of cloud CLIs and few of ls, tar or grep")
     ap.add_argument("--mix", type=float, default=0.25, help="share of entries that also get a code-switched question (0 = none)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
     db = args.db or str(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "pistasho/pistasho.db")
     entries = load_entries(db)
+    # every example of every tool, whatever --limit keeps: the tool-level questions look tools up here
+    by_tool = {}
+    for e in entries:
+        by_tool.setdefault(e["tool"], []).append(e)
     if args.limit:
         rng.shuffle(entries)
         entries = entries[: args.limit]
@@ -197,9 +202,20 @@ def main():
         for line in open(path):
             rec = json.loads(line)
             tool_work.append((rec["tools"], casual(rec["question"], rng, args.casual)))
-    by_tool = {}
-    for e in entries:
-        by_tool.setdefault(e["tool"], []).append(e)
+    if args.max_per_tool:
+        # a random cut per tool, before the (slow) retrieval; the same seed gives the same cut
+        def cap(items, tool_of):
+            rng.shuffle(items)
+            seen, kept = {}, []
+            for it in items:
+                t = tool_of(it)
+                seen[t] = seen.get(t, 0) + 1
+                if seen[t] <= args.max_per_tool:
+                    kept.append(it)
+            return kept
+
+        work = cap(work, lambda w: w[0]["tool"])
+        tool_work = cap(tool_work, lambda w: w[0][0])
     print(f"{len(entries)} entries -> {len(work)} questions, {len(tool_work)} tool-level", file=sys.stderr)
     cache = retrieve([w[1] for w in work] + [t[1] for t in tool_work], out / "candidates.jsonl", args.workers)
 
