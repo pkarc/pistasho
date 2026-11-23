@@ -8,6 +8,7 @@
 #   training/run.sh setup               venv + torch (CUDA 12.8 build) + laya + onnx   (GPU machine)
 #   training/run.sh data                tldr -> train/valid JSONL for each option format (needs pistasho + its DB)
 #   training/run.sh pack                data + eval candidates -> training/out/bundle.tar.gz to copy to the GPU machine
+#   training/run.sh kit                 binary + clean DB + model + question sources -> kit.tar.gz (regenerate data on the GPU machine)
 #   training/run.sh unpack bundle.tar.gz   (GPU machine)
 #   training/run.sh baseline            the untouched checkpoint on the eval banks (zero-shot reference)
 #   training/run.sh smoke               200 rows on the GPU: rows per second, memory, no NaN (first thing to run there)
@@ -65,6 +66,21 @@ stage_pack() {
   tar czf "$OUT/bundle.tar.gz" -C "$OUT" \
     data-td/train.jsonl data-td/valid.jsonl data-tdc/train.jsonl data-tdc/valid.jsonl eval-cands.json eval-cands-casual.json
   ls -la "$OUT/bundle.tar.gz"
+}
+
+# Everything needed to REGENERATE the data on the GPU machine without installing pistasho there: the release
+# binary, a clean database with vectors, the embedding model, and the question sources.
+stage_kit() {
+  local kit="$OUT/kit" db="${XDG_DATA_HOME:-$HOME/.local/share}/pistasho"
+  rm -rf "$kit"; mkdir -p "$kit/data/pistasho" "$kit/config" "$kit/sources"
+  sqlite3 "$db/pistasho.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
+  cp "$db/pistasho.db" "$kit/data/pistasho/"
+  cp -r "$db/models" "$kit/data/pistasho/"
+  cp target/release/pistasho "$kit/"
+  cp $GEN $NL2BASH "$kit/sources/"
+  cp "$OUT/data-td/candidates.jsonl" "$kit/sources/" 2>/dev/null || true
+  tar czf "$OUT/kit.tar.gz" -C "$OUT" kit
+  ls -la "$OUT/kit.tar.gz"
 }
 
 stage_unpack() { mkdir -p "$OUT" && tar xzf "$1" -C "$OUT" && ls "$OUT"; }
@@ -133,6 +149,7 @@ case "$cmd" in
   setup) stage_setup ;;
   data) stage_data ;;
   pack) stage_pack ;;
+  kit) stage_kit ;;
   unpack) stage_unpack "$@" ;;
   baseline) stage_baseline ;;
   smoke) stage_smoke ;;
