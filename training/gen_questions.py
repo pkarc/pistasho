@@ -41,9 +41,7 @@ which one. For each numbered command below, write three questions a person could
 specific command answers: two in Spanish and one in English (or none, see the last rule).
 
 Rules:
-- Sound like a person, not like documentation: casual, short (3 to 14 words), different from each \
-other (one direct request, one phrased as "cómo hago para..." / "how do I...", one that states the \
-goal or the problem instead of the action).
+{style}
 - Never name the command, its tool or its flags, and do not copy the description: the person does \
 not know them.
 - Specific enough that this command, and not a generic one of the same tool, is the answer (keep \
@@ -59,6 +57,17 @@ Answer with JSON only, in exactly this shape and nothing else:
 Commands:
 {items}"""
 
+# The first pass asks for a direct request, a "how do I", and a goal. A second pass with another mix of
+# styles gives more variety out of the same examples.
+STYLES = {
+    "A": ('- Sound like a person, not like documentation: casual, short (3 to 14 words), different from each '
+          'other (one direct request, one phrased as "cómo hago para..." / "how do I...", one that states the '
+          'goal or the problem instead of the action).'),
+    "B": ("- Sound like a person, not like documentation, and write each of the three in a different style: one "
+          "very short, like a search query (2 to 5 words); one that tells the situation or the problem without "
+          "naming the action; one a beginner would write, with everyday words instead of technical ones."),
+}
+PROMPTS = {k: PROMPT.replace("{style}", v) for k, v in STYLES.items()}
 LOCK = threading.Lock()
 
 
@@ -105,7 +114,7 @@ def clean_questions(entry, questions):
 def call(args, key, group):
     body = {
         "model": args.model,
-        "messages": [{"role": "user", "content": PROMPT.format(items=render(group))}],
+        "messages": [{"role": "user", "content": PROMPTS[args.variant].format(items=render(group))}],
         "temperature": args.temperature,
         "max_tokens": 3000,
     }
@@ -147,6 +156,10 @@ def main():
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--seed", type=int, default=11)
+    ap.add_argument("--variant", choices=["A", "B"], default="A", help="prompt variant (B = another mix of styles)")
+    ap.add_argument("--price-in", type=float, default=0.0, help="USD per million input tokens, for --budget")
+    ap.add_argument("--price-out", type=float, default=0.0, help="USD per million output tokens, for --budget")
+    ap.add_argument("--budget", type=float, default=0.0, help="stop sending calls once this many USD were spent (0 = no limit)")
     ap.add_argument("--extra-json", default="{}", help="extra fields for the request body, e.g. to switch thinking off")
     args = ap.parse_args()
 
@@ -171,6 +184,10 @@ def main():
     stats = {"in": 0, "out": 0, "bad_json": 0, "failed": 0, "written": 0, "empty": 0, "dropped": 0}
 
     def work(group):
+        if args.budget and (stats["in"] * args.price_in + stats["out"] * args.price_out) / 1e6 >= args.budget:
+            with LOCK:
+                stats["skipped_budget"] = stats.get("skipped_budget", 0) + 1
+            return
         try:
             text, tin, tout = call(args, key, group)
             items = extract_json(text)["items"]

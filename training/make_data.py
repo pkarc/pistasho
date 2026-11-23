@@ -166,6 +166,7 @@ def main():
     ap.add_argument("--generated", nargs="*", default=[], help="JSONL from gen_questions.py: human-sounding questions per example")
     ap.add_argument("--generated-only", action="store_true", help="use only the generated questions, not the ones derived from the descriptions")
     ap.add_argument("--casual", type=float, default=0.8, help="share of the questions written the way people type (lowercase, no accents, no ¿ ¡ or final stop); see style.py")
+    ap.add_argument("--toollevel", nargs="*", default=[], help="JSONL from import_nl2bash.py: questions whose answer is a tool, not one example")
     ap.add_argument("--mix", type=float, default=0.25, help="share of entries that also get a code-switched question (0 = none)")
     args = ap.parse_args()
 
@@ -190,8 +191,17 @@ def main():
         for text, lang in derived + generated.get((e["tool"], e["cmd"]), []):
             if len(text.split()) >= 2:
                 work.append((e, casual(text, rng, args.casual), lang))
-    print(f"{len(entries)} entries -> {len(work)} questions", file=sys.stderr)
-    cache = retrieve([w[1] for w in work], out / "candidates.jsonl", args.workers)
+    # tool-level questions (NL2Bash): the answer is any example of the tool(s) the one-liner runs
+    tool_work = []
+    for path in args.toollevel:
+        for line in open(path):
+            rec = json.loads(line)
+            tool_work.append((rec["tools"], casual(rec["question"], rng, args.casual)))
+    by_tool = {}
+    for e in entries:
+        by_tool.setdefault(e["tool"], []).append(e)
+    print(f"{len(entries)} entries -> {len(work)} questions, {len(tool_work)} tool-level", file=sys.stderr)
+    cache = retrieve([w[1] for w in work] + [t[1] for t in tool_work], out / "candidates.jsonl", args.workers)
 
     stats = {"train": 0, "valid": 0, "none": 0, "injected": 0, "skipped_no_cands": 0, "skipped_short": 0}
     with (out / "train.jsonl").open("w") as ftrain, (out / "valid.jsonl").open("w") as fvalid:
@@ -238,6 +248,49 @@ def main():
             row["gold"] = {"pick": {"probabilities": probs}}
             # validation holds out whole tools, so it measures tools the model never saw
             held_out = int(hashlib.md5(e["tool"].encode()).hexdigest(), 16) % 20 == 0
+            (fvalid if held_out else ftrain).write(json.dumps(row, ensure_ascii=False) + "\n")
+            stats["valid" if held_out else "train"] += 1
+        # tool-level items: every tool of the one-liner is a right answer, equally; "none" takes every one of
+        # them out
+        for tools, text in tool_work:
+            cands = list(cache.get(text) or [])
+            primary = tools[0]
+            if len(cands) < 5 or primary not in by_tool:
+                stats["skipped_no_cands"] += 1
+                continue
+            if rng.random() < args.none_share:
+                cands = [c for c in cands if c["tool"] not in tools]
+                if len(cands) < 5:
+                    stats["skipped_short"] += 1
+                    continue
+                label = "none"
+            else:
+                if not any(c["tool"] == primary for c in cands):
+                    e = rng.choice(by_tool[primary])
+                    cands = cands[: args.cands - 1] + [{"tool": e["tool"], "description": e["desc"], "command": e["cmd"]}]
+                    stats["injected"] += 1
+                label = None
+            rng.shuffle(cands)
+            cands = cands[: args.cands]
+            probs = {f"c{i + 1}": 0.0 for i in range(len(cands))}
+            probs["none"] = 0.0
+            if label == "none":
+                probs["none"] = 1.0
+                stats["none"] += 1
+            else:
+                # a one-liner `find . | xargs grep x` is answered as well by `grep` as by `find`: each tool it
+                # runs weighs the same, split among that tool's examples
+                present = {t: [i for i, c in enumerate(cands) if c["tool"] == t] for t in tools}
+                present = {t: ix for t, ix in present.items() if ix}
+                if not present:
+                    stats["skipped_short"] += 1
+                    continue
+                for ix in present.values():
+                    for i in ix:
+                        probs[f"c{i + 1}"] = 1.0 / len(present) / len(ix)
+            row = build_row(text, cands, args.fmt)
+            row["gold"] = {"pick": {"probabilities": probs}}
+            held_out = int(hashlib.md5(primary.encode()).hexdigest(), 16) % 20 == 0
             (fvalid if held_out else ftrain).write(json.dumps(row, ensure_ascii=False) + "\n")
             stats["valid" if held_out else "train"] += 1
     print(json.dumps(stats), file=sys.stderr)
