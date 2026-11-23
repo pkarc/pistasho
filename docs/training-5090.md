@@ -151,7 +151,7 @@ nohup training/run.sh ladder > ladder.log 2>&1 &     # 10k, 40k y 100k filas, 1 
 python training/summary.py training/out               # tabla comparada
 ```
 
-Cada escalón es una submuestra **balanceada por herramienta** (`subsample.py`) con la misma receta (`td`, 20
+Cada escalón es una submuestra **uniforme al azar** (`subsample.py`; el tope por herramienta ya viene aplicado en los datos con `--max-per-tool`) con la misma receta (`td`, 20
 candidatos, head 512, `max_len` 768, 1 época). Si el conjunto tiene menos de 100k filas, el último escalón
 usa todo. **Si la estimación del humo dice que un escalón pasa de ~3 h, quita ese tamaño de `SIZES`** o
 sube el micro-batch.

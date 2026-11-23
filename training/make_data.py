@@ -27,7 +27,7 @@ import tomllib
 import sys
 from pathlib import Path
 
-from common import FORMATS, MAX_OPTIONS, ROOT, build_row, local_candidates_batch
+from common import FORMATS, MAX_OPTIONS, ROOT, build_row, local_candidates_batch, right
 from style import casual
 import os
 
@@ -168,6 +168,7 @@ def main():
     ap.add_argument("--casual", type=float, default=0.8, help="share of the questions written the way people type (lowercase, no accents, no ¿ ¡ or final stop); see style.py")
     ap.add_argument("--toollevel", nargs="*", default=[], help="JSONL from import_nl2bash.py: questions whose answer is a tool, not one example")
     ap.add_argument("--max-per-tool", type=int, default=0, help="at most this many questions per tool (0 = no limit): tldr has hundreds of examples of cloud CLIs and few of ls, tar or grep")
+    ap.add_argument("--augment", type=float, default=0.0, help="share of questions rewritten as a short query (2-3 content words) or with a typo, half each; own random stream, so 0 changes nothing")
     ap.add_argument("--mix", type=float, default=0.25, help="share of entries that also get a code-switched question (0 = none)")
     args = ap.parse_args()
 
@@ -189,13 +190,38 @@ def main():
     for path in args.generated:
         for line in open(path):
             rec = json.loads(line)
-            generated.setdefault((rec["tool"], rec["cmd"]), []).extend((t, l) for l, t in rec["questions"])
+            generated.setdefault((rec["tool"], rec["cmd"]), []).extend((t, l, "gen-" + Path(path).stem) for l, t in rec["questions"])
+    aug_rng = random.Random(args.seed + 1)
+
+    def augment(text):
+        """What people also type: two or three content words, or a slip of the fingers. Never fewer than two words."""
+        if args.augment <= 0:
+            return text
+        r = aug_rng.random()
+        if r >= args.augment:
+            return text
+        words = text.split()
+        if r < args.augment / 2:
+            stop = set("como cómo how to do i a an the el la los las un una de del para que por con en and y o or want quiero necesito me my mi mis comando command can puedo se is it that this what cual cuál es are of on in".split())
+            content = [w for w in words if w.lower() not in stop]
+            return " ".join(content[: aug_rng.choice((2, 3))]) if len(content) >= 2 else text
+        long_ = [i for i, w in enumerate(words) if len(w) >= 5 and w.isalpha()]
+        if not long_:
+            return text
+        i = aug_rng.choice(long_)
+        w = words[i]
+        k = aug_rng.randrange(1, len(w) - 1)
+        op = aug_rng.choice(("swap", "drop", "double"))
+        words[i] = w[:k] + w[k + 1] + w[k] + w[k + 2:] if op == "swap" else w[:k] + w[k + 1:] if op == "drop" else w[:k] + w[k] + w[k:]
+        return " ".join(words)
+
     work = []
     for e in entries:
         derived = [] if args.generated_only else variants(e["desc"], e["alt"], rng, args.mix, vocab)
-        for text, lang in derived + generated.get((e["tool"], e["cmd"]), []):
+        # the source tag only labels the row (meta files); it does not touch the random draws
+        for text, lang, src in [(t, l, "tldr-" + l) for t, l in derived] + generated.get((e["tool"], e["cmd"]), []):
             if len(text.split()) >= 2:
-                work.append((e, casual(text, rng, args.casual), lang))
+                work.append((e, augment(casual(text, rng, args.casual)), lang, src))
     # tool-level questions (NL2Bash): the answer is any example of the tool(s) the one-liner runs
     tool_work = []
     for path in args.toollevel:
@@ -220,14 +246,23 @@ def main():
     cache = retrieve([w[1] for w in work] + [t[1] for t in tool_work], out / "candidates.jsonl", args.workers)
 
     stats = {"train": 0, "valid": 0, "none": 0, "injected": 0, "skipped_no_cands": 0, "skipped_short": 0}
-    with (out / "train.jsonl").open("w") as ftrain, (out / "valid.jsonl").open("w") as fvalid:
-        for e, text, lang in work:
-            cands = list(cache.get(text) or [])
+    # one line per row, same order as train.jsonl / valid.jsonl: where the question came from and whether the
+    # local order (before shuffling, injecting or removing anything) had a right tool in first place
+    with (out / "train.jsonl").open("w") as ftrain, (out / "valid.jsonl").open("w") as fvalid, \
+            (out / "train.meta.jsonl").open("w") as mtrain, (out / "valid.meta.jsonl").open("w") as mvalid:
+        def meta(held, **kw):
+            (mvalid if held else mtrain).write(json.dumps(kw, ensure_ascii=False) + "\n")
+
+        for e, text, lang, src in work:
+            cands = [dict(c, rank=r + 1) for r, c in enumerate(cache.get(text) or [])]   # rank = place in the local order (used by --fmt tdr)
             if len(cands) < 5:
                 stats["skipped_no_cands"] += 1
                 continue
             mine = shape(e["cmd"])
+            loc_tool = right(cands[0]["tool"], [e["tool"]])
+            loc_exact = cands[0]["tool"] == e["tool"] and shape(cands[0]["command"]) == mine
             pos = [i for i, c in enumerate(cands) if c["tool"] == e["tool"] and shape(c["command"]) == mine]
+            had_exact = bool(pos)   # the exact example was among the retrieved candidates (else it is injected below)
             make_none = rng.random() < args.none_share
             if make_none:
                 # take the right tool out altogether: what is left cannot be the answer
@@ -265,12 +300,15 @@ def main():
             # validation holds out whole tools, so it measures tools the model never saw
             held_out = int(hashlib.md5(e["tool"].encode()).hexdigest(), 16) % 20 == 0
             (fvalid if held_out else ftrain).write(json.dumps(row, ensure_ascii=False) + "\n")
+            meta(held_out, src=src, q=text, none=label == "none", loc_tool=loc_tool, loc_exact=loc_exact, had=had_exact)
             stats["valid" if held_out else "train"] += 1
         # tool-level items: every tool of the one-liner is a right answer, equally; "none" takes every one of
         # them out
         for tools, text in tool_work:
-            cands = list(cache.get(text) or [])
+            cands = [dict(c, rank=r + 1) for r, c in enumerate(cache.get(text) or [])]
             primary = tools[0]
+            loc_tool = bool(cands) and right(cands[0]["tool"], tools)
+            had_tool = any(c["tool"] == primary for c in cands)
             if len(cands) < 5 or primary not in by_tool:
                 stats["skipped_no_cands"] += 1
                 continue
@@ -308,6 +346,7 @@ def main():
             row["gold"] = {"pick": {"probabilities": probs}}
             held_out = int(hashlib.md5(primary.encode()).hexdigest(), 16) % 20 == 0
             (fvalid if held_out else ftrain).write(json.dumps(row, ensure_ascii=False) + "\n")
+            meta(held_out, src="nl2bash", q=text, none=label == "none", loc_tool=loc_tool, loc_exact=None, had=had_tool)
             stats["valid" if held_out else "train"] += 1
     print(json.dumps(stats), file=sys.stderr)
 

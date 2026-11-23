@@ -17,7 +17,7 @@
 #   training/run.sh train NAME FMT CANDS HEAD    one variant
 #   training/run.sh export NAME FMT CANDS   pruned ONNX of a trained variant + parity and size check
 #
-# Variables: OUT (default training/out), EPOCHS, MICRO_BATCH, GRAD_ACCUM, PY (python), VARIANTS.
+# Variables: OUT (default training/out), EPOCHS, MICRO_BATCH, GRAD_ACCUM, PY (python), VARIANTS, TRAIN_ARGS (extra laya-train flags, e.g. "--encoder-lr 1e-5 --seed 1").
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -100,7 +100,7 @@ stage_train() {
   "$PY" -m laya.train_cli --data "$data/train.jsonl" --eval "$data/valid.jsonl" --base "$BASE" \
     --out "$run/ckpt" --epochs "$EPOCHS" --micro-batch "$MICRO_BATCH" --grad-accum "$GRAD_ACCUM" \
     --head-max-len "$head" --max-len "$((head + 256))" --loss soft-ce --shuffle-options --device auto \
-    2>&1 | tee "$run/train.log"
+    ${TRAIN_ARGS:-} 2>&1 | tee "$run/train.log"
   echo "trained $rows rows x $EPOCHS epochs in $(( $(date +%s) - started )) s" | tee -a "$run/train.log"
   for bank in "" "-casual"; do
     [ -f "$OUT/eval-cands$bank.json" ] || continue

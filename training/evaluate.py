@@ -34,6 +34,7 @@ def main():
     ap.add_argument("--fmt", choices=FORMATS, default="td")
     ap.add_argument("--vocab-map", default=None, help="vocab_map.npy of a pruned export (with --onnx)")
     ap.add_argument("--json", default=None, help="write the numbers here too")
+    ap.add_argument("--dump", default=None, help="per-question model probabilities and local order (for fuse.py)")
     args = ap.parse_args()
 
     import laya
@@ -52,7 +53,7 @@ def main():
     print(f"loaded in {time.time() - t0:.1f} s, peak RSS {rss_mb()} MB")
 
     banks = json.load(open(args.cache))
-    summary = {}
+    summary, dump = {}, {}
     for name, items in banks.items():
         items = [{**i, "cands": i["cands"][: args.cands]} for i in items if i["cands"]]
         if args.limit:
@@ -70,6 +71,11 @@ def main():
             rows.append({"it": it, "order": order, "none": pick["choice"] == "none", "pick": pick["choice"],
                          "conf": pick.get("answer_confidence", pick.get("confidence", 0.0)),
                          "none_p": probs.get("none", 0.0)})
+            dump.setdefault(name, []).append({
+                "q": it["question"], "tools": it["tools"],
+                "cand_tools": [c["tool"] for c in it["cands"]],
+                "local_score": [c.get("score", 0.0) for c in it["cands"]],
+                "p": [probs.get(f"c{i + 1}", 0.0) for i in range(n)], "none_p": probs.get("none", 0.0)})
         d = len(rows)
         ok = lambda r, i: right(r["it"]["cands"][i]["tool"], r["it"]["tools"])
         loc1 = sum(ok(r, 0) for r in rows)
@@ -102,6 +108,8 @@ def main():
     print(f"\npeak RSS {rss_mb()} MB")
     if args.json:
         json.dump(summary, open(args.json, "w"), indent=1)
+    if args.dump:
+        json.dump(dump, open(args.dump, "w"))
 
 
 if __name__ == "__main__":

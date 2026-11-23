@@ -16,14 +16,17 @@ NONE_TEXT = "None of these commands does what the user asked for."
 MAX_OPTIONS = 20  # decide::MAX_OPTIONS
 
 
-FORMATS = ("td", "tdc")
+FORMATS = ("td", "tdc", "tdr")
 
 
-def option_text(c, fmt="td"):
+def option_text(c, fmt="td", rank=None):
     """One candidate as the model reads it. `tdc` is `tool: description -> command`, what the hosted
     model is shown; `td` drops the command. Laya reads all the options inside one token budget
     (`head_max_len`, 256 in the published checkpoint: about 11 tokens each for 20 options), so the
     command mostly pushes the description out; which one works better is an experiment."""
+    if fmt == "tdr":
+        # `td` plus the place the local search gave it, so the model can weigh both signals: `#3 tar: Create an archive`
+        return f'#{rank} {c["tool"]}: {c["description"]}'
     if fmt == "tdc":
         return f'{c["tool"]}: {c["description"]} -> {c["command"]}'
     return f'{c["tool"]}: {c["description"]}'
@@ -32,7 +35,9 @@ def option_text(c, fmt="td"):
 def build_row(question, cands, fmt="td", n=None):
     """The `{state, questions}` of one decision: the first `n` candidates as options `c1`..`cN`, then `none`."""
     cands = cands[:n] if n else cands
-    criteria = {f"c{i + 1}": option_text(c, fmt) for i, c in enumerate(cands)}
+    # `tdr`: the rank travels with the candidate (`rank`, set where the local search order is known); a list
+    # that is still in local order (the eval banks) can leave it out
+    criteria = {f"c{i + 1}": option_text(c, fmt, c.get("rank", i + 1)) for i, c in enumerate(cands)}
     criteria["none"] = NONE_TEXT
     return {
         "state": STATE.format(question=question),
