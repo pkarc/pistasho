@@ -21,4 +21,4 @@ Todavía no hay ninguna versión publicada. Esto es lo que traerá la primera, `
 - Sobre 101 preguntas, el top-1 / top-3 pasó de 28% / 41% (búsqueda difusa de la fase 1) a 51% / 74% con la búsqueda híbrida. Ver `docs/eval.md` para cada medición detrás de cada decisión.
 
 ### Decidido no construir
-- Un modelo local de decisión (Laya) y un LLM local (Ollama): exigen un servicio residente y cientos de MB de RAM para una sola herramienta, y los rerankers generales probados no ayudaron. Solo se admiten proveedores alojados.
+- Un modelo local de decisión (Laya) y un LLM local (Ollama): exigen un servicio residente y cientos de MB de RAM para una sola herramienta, y los rerankers generales probados no ayudaron. Se ajustó Laya con 23 variantes en una RTX 5090 y ninguna superó al orden local (mejor top-1 54% / 44% contra 53% / 46%; ver `docs/eval.md`). Solo se admiten proveedores alojados.

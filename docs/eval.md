@@ -274,3 +274,28 @@ El usuario aclaró (2026-11-22) que Proxmox y Ollama siguen descartados, pero qu
 - **Recursos medidos (PyTorch fp32):** 2279 MB de RAM máxima (incluye la carga del checkpoint de 647 MB), 5.6 s de carga con el caché de Hugging Face caliente (24.7 s la primera vez), ~190 ms de mediana por llamada con 20 candidatos (p95 ~240 ms). **Supera el presupuesto de 1 GB**; la variante ONNX int8 (`laya[onnx]`, ~0.5 GB según la ficha) no se midió.
 - **Lo que falta para que sea una opción:** ajustarlo con datos propios (3.2 y 3.3), exportarlo a ONNX int8 y medir que cabe en el presupuesto y en ~200 ms, y escribir el daemon. El acierto ajustado es **desconocido**; Jev ya da 76–83% hoy.
 
+## Fase 3 · Laya ajustado en la RTX 5090: cerrado como «agotado» (2026-11-23)
+
+Se ejecutó `docs/training-5090.md` hasta el criterio de cierre del §0.5. Diario completo, tabla de 23 corridas con su costo y las fusiones en [`docs/training-experiments.md`](training-experiments.md). Aquí, lo que importa para decidir.
+
+| top-1 / top-3 | originales (101) | sintéticas (287) | originales casual | sintéticas casual |
+|---|---|---|---|---|
+| orden local (híbrido) | 53 / 76 | 46 / 66 | 52 / 77 | 44 / 67 |
+| Jev, 20 candidatos (referencia) | 83 / 92 | 76 / 88 | – | – |
+| Laya sin ajustar | 27 / 50 | 22 / 44 | – | – |
+| Laya ajustado, 40k filas sin rango (`ladder-40000`) | 44 / 72 | 37 / 65 | 43 / 73 | 38 / 66 |
+| Laya ajustado con el rango local en el texto (`rank40k`, 3 semillas) | 47–52 / 71–74 | 41–44 / 66–69 | 46 / 70–72 | 42–43 / 66–68 |
+| mejor corrida (`rank-n20`, una semilla) | 54 / 72 | 44 / 67 | 53 / 69 | 46 / 67 |
+
+- **Ninguna variante pasa la puerta (top-1 ≥ ~70 %).** El modelo con el rango local solo **iguala** al orden local; tres semillas de `rank40k` quedan de −7 a −1 puntos de él. La fusión del modelo con el orden local (peso elegido en una mitad del banco y medido en la otra) queda en ±3 puntos del orden local en todas las corridas: no hay mejora de top-1 demostrada. El top-3 sube a lo sumo 2–4 puntos y no de forma consistente.
+- **La validación engaña.** Con herramientas no vistas pero de las mismas fuentes, sube de 60 % a 79 % con más datos y épocas (el orden local saca 39 %), mientras los bancos no se mueven. Manda el resultado en los bancos.
+- **Más datos no ayudan a partir de ~40k** (10k, 40k y 100k: 39, 44, 42 de top-1 en el original) y **3 épocas empeoran** (38 / 34). Con rango, 97k filas son peores que 40k.
+- **Única palanca que movió el top-1: el rango local como texto de cada opción** (`#3 herramienta: descripción`), de +5 a +8 puntos, porque Laya no ve la posición local y sin ella contradice al orden donde acierta. Con ello el modelo aprende a copiar el rango y poco más. Entrenar solo con los casos donde el orden local falla (3 semillas) da 28–35 % solo, y la fusión elige el orden local.
+- **No aportan:** bajar o subir el `--encoder-lr`, `head` 768, `--loss rlcd`, equilibrar desacuerdo / acuerdo, preguntas cortas y erratas, quitar tldr de los datos (solo Gemma y NL2Bash) ni exigir que el ejemplo exacto esté entre los candidatos. El codificador sí aporta (congelado, cae 10–12 puntos).
+- **«none» no se arregla con `--none-share`:** con 20 % de «none» en el entrenamiento, el modelo con rango dice «none» el 0 % de las veces en los bancos.
+- **El techo de combinar** (acierta el modelo o el orden local) es 57–71 %, y ninguna fusión lo alcanza.
+- **Costo:** unos 7 min por corrida de 40k filas (63–125 filas/s en la 5090); toda la sesión cupo en unas horas de GPU.
+- **Límites de la conclusión:** `rank-n20` iguala al orden local con una sola semilla (pista no confirmada); currículo y calibración de «none» no se probaron; la exportación a ONNX, la paridad, la RAM y la latencia en CPU **no se midieron** porque ninguna variante pasó la puerta de acierto.
+
+**Decisión:** no integrar Laya ni el daemon (no justifica ~1 GB de RAM más un daemon por un resultado que no supera al orden local); **Jev queda como la opción para quien quiera la mejora** (83 / 76). La tubería (`training/`), el kit y el diario quedan para reabrirlo si cambian las condiciones (por ejemplo, datos reales de uso: ver la visión a largo plazo en `PLAN.md`).
+

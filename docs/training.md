@@ -2,6 +2,10 @@
 
 > Runbook de la fase 3 local (tareas 3.2–3.4 del plan). Va solo en español, como el resto de las notas
 > de proyecto. Los scripts están en `training/` y se comentan en inglés.
+>
+> **Estado (2026-11-23): cerrado como «agotado».** Se ejecutó el plan en la RTX 5090 ([`training-5090.md`](training-5090.md))
+> y ninguna variante pasa la puerta de decisión; resultados en [`training-experiments.md`](training-experiments.md) y
+> [`eval.md`](eval.md). No se integra Laya ni el daemon; este runbook queda para reabrirlo.
 
 **Objetivo (decisión del usuario, 2026-11-22):** que pistasho sea lo más eficiente posible **sin depender de
 terceros**. Jev (y Anthropic) quedan como opción del usuario; el modelo local es el camino principal.
@@ -186,6 +190,29 @@ determinista y se usa con probabilidad (`make_data.py --casual`, 0.8 por defecto
 escriben bien, y los bancos de `eval` escritos a mano en su mayoría llevan tildes). También hay una versión
 informal de los bancos (`make_eval_cache.py --casual`) para medir las dos formas. Se aplica a **todas** las
 preguntas, las generadas y las derivadas de tldr, antes de recuperar los candidatos.
+
+## Resultado en la 5090 (2026-11-23): agotado
+
+Se corrieron 23 variantes (datos de 10k a 100k filas, épocas, composición, rango local en el texto, tasas de
+aprendizaje, presupuesto de tokens, pérdida, codificador congelado, solo desacuerdos, `none_share`, aumentos).
+El mejor top-1 es 54 / 44 contra el ≥ 70 % exigido; el modelo con el rango local solo iguala al orden local
+(53 / 46) y la fusión queda en ±3 puntos. Cifras, diario y costos: `docs/training-experiments.md`.
+
+Lo que conviene recordar si se reabre:
+- **La validación de este diseño no predice la transferencia** (herramientas no vistas, pero de las mismas
+  fuentes). Medir siempre en los bancos, tal cual y casual, y con varias semillas: el banco original (101
+  preguntas) se mueve hasta ~5 puntos entre semillas.
+- **Laya no ve la posición local** (se barajan las opciones). Darle el rango como texto (`tdr`) fue la única
+  palanca que movió el top-1. Las filas con el ejemplo exacto inyectado no pueden llevar un rango inventado.
+- Más datos (> 40k) y más épocas no ayudan; «none» no se arregla con `--none-share`.
+- No se midió el ONNX (paridad, RAM, latencia) con un checkpoint grande: la poda con pesos ajustados sigue sin
+  verificarse (arriba, «Abierto»).
+- `laya-train` usa bf16 en CUDA según el checkpoint (`amp_dtype`) y no necesita parche en Blackwell.
+
+Datos de entrenamiento: textos de tldr (CC BY 4.0), preguntas generadas con Gemma 4 31B (Apache-2.0) y
+preguntas a nivel de herramienta de **NL2Bash** (Lin, Wang, Zettlemoyer y Ernst, *NL2Bash: A Corpus and Semantic
+Parser for Natural Language Interface to the Linux Operating System*, LREC 2018; datos con licencia MIT): citarlos
+si se publica algún modelo.
 
 ## Puerta de decisión
 

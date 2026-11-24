@@ -21,4 +21,4 @@ Nothing is released yet. This is what the first version, `0.1.0`, will contain.
 - On 101 questions, top-1 / top-3 went from 28% / 41% (phase 1 fuzzy matching) to 51% / 74% with the hybrid search. See `docs/eval.md` (written in Spanish) for every measurement behind each decision.
 
 ### Decided not to build
-- A local decision model (Laya) and a local LLM (Ollama): they need a resident service and hundreds of MB of RAM for one tool, and the general rerankers tried did not help. Only hosted providers are supported.
+- A local decision model (Laya) and a local LLM (Ollama): they need a resident service and hundreds of MB of RAM for one tool, and the general rerankers tried did not help. Laya was fine-tuned in 23 variants on an RTX 5090 and none beat the local order (best top-1 54% / 44% against 53% / 46%; see `docs/eval.md`). Only hosted providers are supported.
